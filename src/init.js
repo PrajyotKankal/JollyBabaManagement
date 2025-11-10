@@ -76,6 +76,7 @@ async function ensureTables() {
       customer_name TEXT,
       mobile_number TEXT,
       remarks TEXT,
+      vendor_phone TEXT,
       status TEXT NOT NULL DEFAULT 'AVAILABLE',
       CONSTRAINT inventory_items_status_chk CHECK (status IN ('AVAILABLE','SOLD','RESERVED'))
     );
@@ -83,7 +84,33 @@ async function ensureTables() {
 
   await pool.query(`
     ALTER TABLE inventory_items
+    ADD COLUMN IF NOT EXISTS vendor_phone TEXT;
+  `);
+
+  await pool.query(`
+    ALTER TABLE inventory_items
     ADD COLUMN IF NOT EXISTS brand TEXT;
+  `);
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS customers (
+      id SERIAL PRIMARY KEY,
+      name TEXT NOT NULL,
+      name_key TEXT NOT NULL,
+      phone TEXT,
+      phone_digits TEXT NOT NULL DEFAULT '',
+      email TEXT,
+      address TEXT,
+      notes TEXT,
+      created_at TIMESTAMP NOT NULL DEFAULT now(),
+      updated_at TIMESTAMP NOT NULL DEFAULT now(),
+      last_purchase_at TIMESTAMP
+    );
+  `);
+
+  await pool.query(`
+    CREATE UNIQUE INDEX IF NOT EXISTS customers_name_phone_key
+      ON customers (name_key, phone_digits);
   `);
 
   await pool.query(`

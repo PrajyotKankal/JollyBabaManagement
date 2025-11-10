@@ -9,6 +9,53 @@ router.use((req, res, next) => {
 });
 const pool = require('./db');
 
+function normalizeWhitespace(value) {
+  return (value || '')
+    .toString()
+    .trim()
+    .replace(/\s+/g, ' ');
+}
+
+function toNameKey(name) {
+  return normalizeWhitespace(name).toLowerCase();
+}
+
+function toPhoneDigits(phone) {
+  return (phone || '').toString().replace(/\D+/g, '');
+}
+
+async function upsertCustomerRecord({ name, phone, address, lastPurchaseAt }) {
+  const trimmedName = normalizeWhitespace(name);
+  if (!trimmedName) return;
+
+  const nameKey = toNameKey(trimmedName);
+  const digits = toPhoneDigits(phone);
+  const safeDigits = digits || '';
+  const purchaseDate = lastPurchaseAt || null;
+
+  await pool.query(
+    `
+      INSERT INTO customers (name, name_key, phone, phone_digits, address, last_purchase_at, created_at, updated_at)
+      VALUES ($1, $2, $3, $4, NULLIF($5, ''), COALESCE($6::timestamp, now()), now(), now())
+      ON CONFLICT (name_key, phone_digits)
+      DO UPDATE SET
+        name = EXCLUDED.name,
+        phone = EXCLUDED.phone,
+        address = COALESCE(NULLIF(EXCLUDED.address, ''), customers.address),
+        last_purchase_at = COALESCE($6::timestamp, now()),
+        updated_at = now();
+    `,
+    [
+      trimmedName,
+      nameKey,
+      phone || null,
+      safeDigits,
+      normalizeWhitespace(address),
+      purchaseDate,
+    ]
+  );
+}
+
 function toCsv(rows) {
   if (!rows || rows.length === 0) return '';
   const headers = Object.keys(rows[0]);
@@ -54,6 +101,80 @@ function buildWhere({ q, status, vendor, from, to, brand }) {
   return { where: where.length ? 'WHERE ' + where.join(' AND ') : '', params };
 }
 
+router.get('/customers/search', async (req, res) => {
+  const raw = (req.query.q || '').toString();
+  const query = raw.trim();
+  if (query.length < 2) {
+    return res.json({ customers: [] });
+  }
+
+  try {
+    const lower = query.toLowerCase();
+    const nameKeyLike = `%${toNameKey(query)}%`;
+    const nameLike = `%${lower}%`;
+    const phoneDigits = toPhoneDigits(query);
+
+    const filters = ['LOWER(name) LIKE $1', 'name_key LIKE $2'];
+    const params = [nameLike, nameKeyLike];
+    if (phoneDigits) {
+      filters.push('phone_digits LIKE $3');
+      params.push(`%${phoneDigits}%`);
+    }
+
+    const sql = `
+      SELECT id, name, phone, email, address, last_purchase_at
+      FROM customers
+      WHERE ${filters.join(' OR ')}
+      ORDER BY last_purchase_at DESC NULLS LAST, updated_at DESC
+      LIMIT 10
+    `;
+
+    const { rows } = await pool.query(sql, params);
+    return res.json({ customers: rows });
+  } catch (err) {
+    console.error('GET /customers/search error', err);
+    return res.status(500).json({ error: 'CUSTOMER_SEARCH_FAILED' });
+  }
+});
+
+router.get('/vendors/search', async (req, res) => {
+  const raw = (req.query.q || '').toString();
+  const query = raw.trim();
+  if (query.length < 2) {
+    return res.json({ vendors: [] });
+  }
+
+  try {
+    const like = `%${query}%`;
+    const digits = toPhoneDigits(query);
+    const conditions = ['vendor_purchase ILIKE $1', "COALESCE(vendor_phone, '') ILIKE $2"];
+    const params = [like, like];
+    if (digits) {
+      params.push(`%${digits}%`);
+      conditions.push("regexp_replace(COALESCE(vendor_phone,''), '\\\\D','','g') LIKE $" + params.length);
+    }
+
+    const sql = `
+      SELECT vendor_purchase AS name,
+             COALESCE(vendor_phone, '') AS phone,
+             COUNT(*) AS total,
+             MAX(updated_at) AS last_used
+      FROM inventory_items
+      WHERE vendor_purchase IS NOT NULL
+        AND (${conditions.join(' OR ')})
+      GROUP BY vendor_purchase, vendor_phone
+      ORDER BY last_used DESC NULLS LAST, total DESC
+      LIMIT 10
+    `;
+
+    const { rows } = await pool.query(sql, params);
+    return res.json({ vendors: rows });
+  } catch (err) {
+    console.error('GET /vendors/search error', err);
+    return res.status(500).json({ error: 'VENDOR_SEARCH_FAILED' });
+  }
+});
+
 router.get('/inventory', async (req, res) => {
   try {
     const { q, status, vendor, from, to, brand, sort = 'date', order = 'desc' } = req.query;
@@ -63,7 +184,7 @@ router.get('/inventory', async (req, res) => {
 
     const { rows } = await pool.query(
       `SELECT sr_no, to_char(date,'YYYY-MM-DD') as date, brand, model, imei, variant_gb_color, vendor_purchase, 
-              purchase_amount::float, to_char(sell_date,'YYYY-MM-DD') as sell_date, sell_amount::float,
+              vendor_phone, purchase_amount::float, to_char(sell_date,'YYYY-MM-DD') as sell_date, sell_amount::float,
               customer_name, mobile_number, remarks, status
          FROM inventory_items ${where}
          ORDER BY ${sortCol} ${sortOrder}, sr_no DESC`,
@@ -106,6 +227,7 @@ router.patch('/inventory/:srNo', async (req, res) => {
     imei: 'imei',
     variantGbColor: 'variant_gb_color',
     vendorPurchase: 'vendor_purchase',
+    vendorPhone: 'vendor_phone',
     purchaseAmount: 'purchase_amount',
     remarks: 'remarks',
     customerName: 'customer_name',
@@ -224,10 +346,20 @@ router.post('/inventory', async (req, res) => {
   try {
     await client.query('BEGIN');
     const { rows } = await client.query(
-      `INSERT INTO inventory_items (date, brand, model, imei, variant_gb_color, vendor_purchase, purchase_amount, remarks, status, created_at, updated_at)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,'AVAILABLE', now(), now())
+      `INSERT INTO inventory_items (date, brand, model, imei, variant_gb_color, vendor_purchase, vendor_phone, purchase_amount, remarks, status, created_at, updated_at)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,'AVAILABLE', now(), now())
        RETURNING sr_no`,
-      [c.date, c.brand || null, c.model, c.imei, c.variantGbColor || null, c.vendorPurchase || null, c.purchaseAmount || 0, c.remarks || null]
+      [
+        c.date,
+        c.brand || null,
+        c.model,
+        c.imei,
+        c.variantGbColor || null,
+        c.vendorPurchase || null,
+        c.vendorPhone || null,
+        c.purchaseAmount || 0,
+        c.remarks || null,
+      ]
     );
     await client.query('COMMIT');
     return res.json({ success: true, sr_no: rows[0].sr_no });
@@ -260,6 +392,18 @@ router.post('/inventory/:srNo/sell', async (req, res) => {
       [c.sellDate, c.sellAmount || 0, c.customerName || null, c.mobileNumber || null, c.remarks || null, srNo]
     );
     if (rowCount === 0) return res.status(400).json({ error: 'NOT_AVAILABLE_OR_NOT_FOUND' });
+
+    try {
+      await upsertCustomerRecord({
+        name: c.customerName,
+        phone: c.mobileNumber,
+        address: c.customerAddress,
+        lastPurchaseAt: c.sellDate,
+      });
+    } catch (customerErr) {
+      console.warn('POST /inventory/:srNo/sell customer upsert failed', customerErr);
+    }
+
     return res.json({ success: true });
   } catch (e) {
     console.error('POST /inventory/:srNo/sell error', e);
