@@ -113,6 +113,11 @@ async function ensureTables() {
   `);
 
   await pool.query(`
+    ALTER TABLE inventory_items
+    ADD COLUMN IF NOT EXISTS khatabook_entry_id INTEGER;
+  `);
+
+  await pool.query(`
     CREATE TABLE IF NOT EXISTS customers (
       id SERIAL PRIMARY KEY,
       name TEXT NOT NULL,
@@ -148,6 +153,24 @@ async function ensureTables() {
       CONSTRAINT khatabook_paid_nonnegative CHECK (paid >= 0),
       CONSTRAINT khatabook_amount_nonnegative CHECK (amount >= 0)
     );
+  `);
+
+  await pool.query(`
+    DO $$
+    BEGIN
+      IF NOT EXISTS (
+        SELECT 1
+        FROM pg_constraint
+        WHERE conname = 'inventory_items_khatabook_entry_id_fkey'
+      ) THEN
+        ALTER TABLE inventory_items
+        ADD CONSTRAINT inventory_items_khatabook_entry_id_fkey
+        FOREIGN KEY (khatabook_entry_id)
+        REFERENCES khatabook_entries(id)
+        ON DELETE SET NULL;
+      END IF;
+    END
+    $$;
   `);
 
   await pool.query(`

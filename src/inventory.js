@@ -24,7 +24,7 @@ function toPhoneDigits(phone) {
   return (phone || '').toString().replace(/\D+/g, '');
 }
 
-async function upsertCustomerRecord({ name, phone, address, lastPurchaseAt }) {
+async function upsertCustomerRecord({ name, phone, address, lastPurchaseAt }, client) {
   const trimmedName = normalizeWhitespace(name);
   if (!trimmedName) return;
 
@@ -33,7 +33,8 @@ async function upsertCustomerRecord({ name, phone, address, lastPurchaseAt }) {
   const safeDigits = digits || '';
   const purchaseDate = lastPurchaseAt || null;
 
-  await pool.query(
+  const executor = client || pool;
+  await executor.query(
     `
       INSERT INTO customers (name, name_key, phone, phone_digits, address, last_purchase_at, created_at, updated_at)
       VALUES ($1, $2, $3, $4, NULLIF($5, ''), COALESCE($6::timestamp, now()), now(), now())
@@ -54,6 +55,59 @@ async function upsertCustomerRecord({ name, phone, address, lastPurchaseAt }) {
       purchaseDate,
     ]
   );
+}
+
+function toNumericAmount(value) {
+  if (value === null || value === undefined) return 0;
+  if (typeof value === 'number') return Number(value) || 0;
+  const cleaned = value.toString().replace(/,/g, '').trim();
+  const parsed = Number.parseFloat(cleaned);
+  return Number.isFinite(parsed) ? parsed : 0;
+}
+
+function extractPaidAmountFromRemarks(remarks) {
+  if (!remarks) return 0;
+  const match = /Paid\s*:?.*?₹?\s*([0-9][0-9,]*(?:\.[0-9]+)?)/i.exec(remarks);
+  if (!match) return 0;
+  const cleaned = match[1].replace(/,/g, '');
+  const parsed = Number.parseFloat(cleaned);
+  return Number.isFinite(parsed) ? parsed : 0;
+}
+
+async function createKhatabookEntryForSale(client, { srNo, item, payload }) {
+  const amount = toNumericAmount(payload.sellAmount);
+  if (amount <= 0) return null;
+
+  const name = normalizeWhitespace(payload.customerName) || 'Customer';
+  const mobile = normalizeWhitespace(payload.mobileNumber) || null;
+  const remarks = normalizeWhitespace(payload.remarks);
+  const paid = extractPaidAmountFromRemarks(remarks);
+  const remaining = Math.max(0, amount - paid);
+  const entryDate = normalizeWhitespace(payload.sellDate) || new Date().toISOString().slice(0, 10);
+
+  const descriptorParts = [];
+  if (item.model) descriptorParts.push(normalizeWhitespace(item.model));
+  if (item.variant_gb_color) descriptorParts.push(normalizeWhitespace(item.variant_gb_color));
+  const description = descriptorParts.length ? `Sale • ${descriptorParts.join(' • ')}` : `Sale • SR ${srNo}`;
+
+  const noteParts = [];
+  if (item.imei) noteParts.push(`IMEI: ${item.imei}`);
+  if (payload.customerAddress) noteParts.push(`Address: ${normalizeWhitespace(payload.customerAddress)}`);
+  if (remarks) noteParts.push(remarks);
+  if (remaining > 0.0001) noteParts.push(`Remaining: ₹${remaining.toFixed(2)}`);
+  noteParts.push(`SR No: ${srNo}`);
+  const note = noteParts.map((p) => normalizeWhitespace(p)).filter((p) => p && p.length).join(' | ');
+
+  const { rows } = await client.query(
+    `
+      INSERT INTO khatabook_entries (name, mobile, amount, paid, description, note, entry_date)
+      VALUES ($1, $2, $3, $4, $5, NULLIF($6, ''), $7)
+      RETURNING id
+    `,
+    [name, mobile, amount, paid, description, note, entryDate]
+  );
+
+  return rows[0] ? rows[0].id : null;
 }
 
 function toCsv(rows) {
@@ -378,8 +432,10 @@ router.post('/inventory', async (req, res) => {
 router.post('/inventory/:srNo/sell', async (req, res) => {
   const srNo = parseInt(req.params.srNo, 10);
   const c = req.body || {};
+  const client = await pool.connect();
   try {
-    const { rowCount } = await pool.query(
+    await client.query('BEGIN');
+    const updateRes = await client.query(
       `UPDATE inventory_items
          SET sell_date = $1,
              sell_amount = $2,
@@ -388,26 +444,118 @@ router.post('/inventory/:srNo/sell', async (req, res) => {
              remarks = $5,
              status = 'SOLD',
              updated_at = now()
-       WHERE sr_no = $6 AND status = 'AVAILABLE'`,
+       WHERE sr_no = $6 AND status = 'AVAILABLE'
+       RETURNING sr_no, model, variant_gb_color, imei` ,
       [c.sellDate, c.sellAmount || 0, c.customerName || null, c.mobileNumber || null, c.remarks || null, srNo]
     );
-    if (rowCount === 0) return res.status(400).json({ error: 'NOT_AVAILABLE_OR_NOT_FOUND' });
+
+    if (updateRes.rowCount === 0) {
+      await client.query('ROLLBACK');
+      return res.status(400).json({ error: 'NOT_AVAILABLE_OR_NOT_FOUND' });
+    }
+
+    const itemRow = updateRes.rows[0];
+    let khatabookEntryId = null;
 
     try {
-      await upsertCustomerRecord({
-        name: c.customerName,
-        phone: c.mobileNumber,
-        address: c.customerAddress,
-        lastPurchaseAt: c.sellDate,
-      });
+      khatabookEntryId = await createKhatabookEntryForSale(client, { srNo, item: itemRow, payload: c });
+      if (khatabookEntryId) {
+        await client.query('UPDATE inventory_items SET khatabook_entry_id = $1 WHERE sr_no = $2', [khatabookEntryId, srNo]);
+      }
+    } catch (entryErr) {
+      console.warn('POST /inventory/:srNo/sell khatabook create failed', entryErr);
+    }
+
+    try {
+      await upsertCustomerRecord(
+        {
+          name: c.customerName,
+          phone: c.mobileNumber,
+          address: c.customerAddress,
+          lastPurchaseAt: c.sellDate,
+        },
+        client
+      );
     } catch (customerErr) {
       console.warn('POST /inventory/:srNo/sell customer upsert failed', customerErr);
     }
 
-    return res.json({ success: true });
+    await client.query('COMMIT');
+
+    return res.json({ success: true, khatabookEntryId: khatabookEntryId || null });
   } catch (e) {
+    await client.query('ROLLBACK');
     console.error('POST /inventory/:srNo/sell error', e);
     return res.status(500).json({ error: 'SELL_FAILED' });
+  } finally {
+    client.release();
+  }
+});
+
+router.post('/inventory/:srNo/make-available', async (req, res) => {
+  const srNo = parseInt(req.params.srNo, 10);
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+
+    const currentRes = await client.query(
+      `SELECT sr_no, status, remarks, khatabook_entry_id
+         FROM inventory_items
+        WHERE sr_no = $1
+        FOR UPDATE`,
+      [srNo]
+    );
+
+    if (currentRes.rowCount === 0) {
+      await client.query('ROLLBACK');
+      return res.status(404).json({ error: 'NOT_FOUND' });
+    }
+
+    const current = currentRes.rows[0];
+    if (current.status !== 'SOLD') {
+      await client.query('ROLLBACK');
+      return res.status(400).json({ error: 'NOT_SOLD' });
+    }
+
+    let khatabookEntryDeleted = false;
+    if (current.khatabook_entry_id) {
+      try {
+        const delRes = await client.query('DELETE FROM khatabook_entries WHERE id = $1', [current.khatabook_entry_id]);
+        khatabookEntryDeleted = delRes.rowCount > 0;
+      } catch (delErr) {
+        console.warn('POST /inventory/:srNo/make-available khatabook delete failed', delErr);
+      }
+    }
+
+    const cancellationNote = `Sale cancelled on ${new Date().toISOString().slice(0, 10)}`;
+    const existingRemarks = normalizeWhitespace(current.remarks);
+    const combinedRemarks = existingRemarks ? `${existingRemarks} | ${cancellationNote}` : cancellationNote;
+    const nextRemarks = normalizeWhitespace(combinedRemarks) || null;
+
+    const updateRes = await client.query(
+      `UPDATE inventory_items
+          SET sell_date = NULL,
+              sell_amount = NULL,
+              customer_name = NULL,
+              mobile_number = NULL,
+              remarks = $2,
+              status = 'AVAILABLE',
+              khatabook_entry_id = NULL,
+              updated_at = now()
+        WHERE sr_no = $1
+        RETURNING sr_no, status, remarks, sell_date, sell_amount, customer_name, mobile_number`,
+      [srNo, nextRemarks]
+    );
+
+    await client.query('COMMIT');
+
+    return res.json({ success: true, item: updateRes.rows[0], khatabookEntryDeleted });
+  } catch (err) {
+    await client.query('ROLLBACK');
+    console.error('POST /inventory/:srNo/make-available error', err);
+    return res.status(500).json({ error: 'MAKE_AVAILABLE_FAILED' });
+  } finally {
+    client.release();
   }
 });
 
