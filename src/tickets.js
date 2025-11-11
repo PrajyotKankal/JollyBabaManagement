@@ -501,6 +501,7 @@ router.post("/tickets", authMiddleware, upload.single("photo"), async (req, res)
 // POST /api/tickets/:id/repaired-photo
 // Requires auth and a multipart field `repaired_photo`.
 // Compresses the image, uploads variants to Cloudinary, stamps metadata, flips status to "Repaired".
+console.log("🛠️ Repaired photo endpoint registered (tickets.js)");
 router.post(
   "/tickets/:id/repaired-photo",
   authMiddleware,
