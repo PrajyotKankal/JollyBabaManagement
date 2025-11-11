@@ -58,6 +58,26 @@ async function ensureTables() {
       updated_at TIMESTAMP DEFAULT now()
     );
   `);
+
+  await pool.query(`
+    ALTER TABLE tickets
+    ADD COLUMN IF NOT EXISTS repaired_photo TEXT;
+  `);
+
+  await pool.query(`
+    ALTER TABLE tickets
+    ADD COLUMN IF NOT EXISTS repaired_photo_thumb TEXT;
+  `);
+
+  await pool.query(`
+    ALTER TABLE tickets
+    ADD COLUMN IF NOT EXISTS repaired_photo_uploaded_at TIMESTAMP;
+  `);
+
+  await pool.query(`
+    ALTER TABLE tickets
+    ADD COLUMN IF NOT EXISTS repaired_photo_uploaded_by TEXT;
+  `);
   // inventory_items table
   await pool.query(`
     CREATE TABLE IF NOT EXISTS inventory_items (
@@ -130,7 +150,32 @@ async function ensureTables() {
     );
   `);
 
-  console.log("🧱 Tables ensured: technicians, tickets, inventory_items, khatabook_entries");
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS khatabook_messages (
+      id SERIAL PRIMARY KEY,
+      entry_id INTEGER NOT NULL REFERENCES khatabook_entries(id) ON DELETE CASCADE,
+      recipient_name TEXT NOT NULL,
+      recipient_phone TEXT NOT NULL,
+      template_key TEXT NOT NULL,
+      text_snapshot TEXT NOT NULL,
+      status TEXT NOT NULL DEFAULT 'queued',
+      provider_id TEXT,
+      channel TEXT NOT NULL DEFAULT 'whatsapp',
+      sandbox BOOLEAN NOT NULL DEFAULT false,
+      error TEXT,
+      metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
+      created_at TIMESTAMP NOT NULL DEFAULT now(),
+      updated_at TIMESTAMP NOT NULL DEFAULT now(),
+      sent_at TIMESTAMP
+    );
+  `);
+
+  await pool.query(`
+    CREATE INDEX IF NOT EXISTS khatabook_messages_entry_phone_idx
+      ON khatabook_messages (entry_id, recipient_phone, created_at DESC);
+  `);
+
+  console.log("🧱 Tables ensured: technicians, tickets, inventory_items, khatabook_entries, khatabook_messages");
 }
 
 /**

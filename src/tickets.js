@@ -3,10 +3,113 @@ const express = require("express");
 const multer = require("multer");
 const path = require("path");
 const fs = require("fs");
+const sharp = require("sharp");
+const cloudinary = require("cloudinary").v2;
 const pool = require("./db");
 const { authMiddleware } = require("./auth");
 
 const router = express.Router();
+
+const fsp = fs.promises;
+
+const CLOUDINARY_CONFIGURED =
+  process.env.CLOUDINARY_CLOUD_NAME &&
+  process.env.CLOUDINARY_API_KEY &&
+  process.env.CLOUDINARY_API_SECRET;
+
+if (CLOUDINARY_CONFIGURED) {
+  cloudinary.config({
+    cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
+    api_key: process.env.CLOUDINARY_API_KEY,
+    api_secret: process.env.CLOUDINARY_API_SECRET,
+  });
+} else {
+  console.warn(
+    "⚠️ Cloudinary env variables missing. Set CLOUDINARY_CLOUD_NAME, CLOUDINARY_API_KEY, CLOUDINARY_API_SECRET to enable repaired photo uploads."
+  );
+}
+
+const REPAIRED_FOLDER = process.env.CLOUDINARY_REPAIRED_FOLDER || "Jollybaba_Repaired";
+const REPAIRED_MAX_DIMENSION = parseInt(process.env.REPAIRED_MAX_DIMENSION || "1600", 10);
+const REPAIRED_THUMB_DIMENSION = parseInt(process.env.REPAIRED_THUMB_DIMENSION || "480", 10);
+const REPAIRED_QUALITY = parseInt(process.env.REPAIRED_QUALITY || "75", 10);
+const REPAIRED_THUMB_QUALITY = parseInt(process.env.REPAIRED_THUMB_QUALITY || "70", 10);
+
+function inferUploadedBy(user = {}) {
+  if (!user) return null;
+  if (user.email) return user.email;
+  if (user.name) return user.name;
+  if (user.id !== undefined && user.id !== null) return `id:${user.id}`;
+  return null;
+}
+
+function uploadBufferToCloudinary(buffer, options) {
+  if (!CLOUDINARY_CONFIGURED) {
+    return Promise.reject(new Error("Cloudinary not configured"));
+  }
+  return new Promise((resolve, reject) => {
+    const stream = cloudinary.uploader.upload_stream(
+      {
+        resource_type: "image",
+        overwrite: true,
+        ...options,
+      },
+      (err, result) => {
+        if (err) return reject(err);
+        return resolve(result);
+      }
+    );
+    stream.on("error", reject);
+    stream.end(buffer);
+  });
+}
+
+async function prepareRepairedPhotoVariants(filePath, ticketId) {
+  if (!CLOUDINARY_CONFIGURED) {
+    throw new Error("Cloudinary not configured");
+  }
+  const baseName = `ticket_${ticketId}_${Date.now()}`;
+  const mainBuffer = await sharp(filePath)
+    .rotate()
+    .resize({
+      width: REPAIRED_MAX_DIMENSION,
+      height: REPAIRED_MAX_DIMENSION,
+      fit: "inside",
+      withoutEnlargement: true,
+    })
+    .webp({ quality: REPAIRED_QUALITY, effort: 4 })
+    .toBuffer();
+
+  const thumbBuffer = await sharp(filePath)
+    .rotate()
+    .resize({
+      width: REPAIRED_THUMB_DIMENSION,
+      height: REPAIRED_THUMB_DIMENSION,
+      fit: "inside",
+      withoutEnlargement: true,
+    })
+    .webp({ quality: REPAIRED_THUMB_QUALITY, effort: 2 })
+    .toBuffer();
+
+  const [mainUpload, thumbUpload] = await Promise.all([
+    uploadBufferToCloudinary(mainBuffer, {
+      folder: REPAIRED_FOLDER,
+      public_id: `${baseName}`,
+      format: "webp",
+    }),
+    uploadBufferToCloudinary(thumbBuffer, {
+      folder: REPAIRED_FOLDER,
+      public_id: `${baseName}_thumb`,
+      format: "webp",
+      transformation: [{ quality: "auto", fetch_format: "auto" }],
+    }),
+  ]);
+
+  return {
+    main: mainUpload,
+    thumb: thumbUpload,
+  };
+}
 
 // ---------------------------
 // Uploads directory & multer
@@ -394,6 +497,107 @@ router.post("/tickets", authMiddleware, upload.single("photo"), async (req, res)
     return res.status(500).json({ error: "Failed to create ticket", details: process.env.NODE_ENV === "development" ? (err.message || err) : undefined });
   }
 });
+
+// POST /api/tickets/:id/repaired-photo
+// Requires auth and a multipart field `repaired_photo`.
+// Compresses the image, uploads variants to Cloudinary, stamps metadata, flips status to "Repaired".
+router.post(
+  "/tickets/:id/repaired-photo",
+  authMiddleware,
+  upload.single("repaired_photo"),
+  async (req, res) => {
+    if (!pool || typeof pool.query !== "function") {
+      return res.status(500).json({ error: "Database not available" });
+    }
+
+    const rawId = req.params.id;
+    const ticketId = Number.parseInt(rawId, 10);
+    if (!Number.isInteger(ticketId)) {
+      return res.status(400).json({ error: "Invalid ticket id" });
+    }
+
+    if (!req.file) {
+      return res.status(400).json({ error: "repaired_photo file is required" });
+    }
+
+    if (!CLOUDINARY_CONFIGURED) {
+      await fsp.unlink(req.file.path).catch(() => {});
+      return res.status(500).json({ error: "Repaired photo uploads are not configured" });
+    }
+
+    let notes = req.body?.notes;
+    if (typeof notes === "string") {
+      try {
+        notes = JSON.parse(notes);
+      } catch (_) {
+        notes = [];
+      }
+    }
+    if (!Array.isArray(notes)) notes = undefined;
+
+    try {
+      // Ensure ticket exists before processing heavy work
+      const existing = await pool.query("SELECT id FROM tickets WHERE id = $1", [ticketId]);
+      if (existing.rowCount === 0) {
+        await fsp.unlink(req.file.path).catch(() => {});
+        return res.status(404).json({ error: "Ticket not found" });
+      }
+
+      let variants;
+      try {
+        variants = await prepareRepairedPhotoVariants(req.file.path, ticketId);
+      } finally {
+        await fsp.unlink(req.file.path).catch(() => {});
+      }
+
+      const mainUrl = variants?.main?.secure_url || variants?.main?.url;
+      const thumbUrl = variants?.thumb?.secure_url || variants?.thumb?.url;
+      if (!mainUrl) {
+        return res.status(500).json({ error: "Failed to upload repaired photo" });
+      }
+
+      const uploadedBy = inferUploadedBy(req.user);
+
+      const updateResult = await pool.query(
+        `
+        UPDATE tickets
+        SET status = 'Repaired',
+            notes = COALESCE($1::jsonb, notes),
+            repaired_photo = $2,
+            repaired_photo_thumb = COALESCE($3, repaired_photo_thumb),
+            repaired_photo_uploaded_at = now(),
+            repaired_photo_uploaded_by = COALESCE($4, repaired_photo_uploaded_by),
+            updated_at = now()
+        WHERE id = $5
+        RETURNING *;
+        `,
+        [notes ? JSON.stringify(notes) : null, mainUrl, thumbUrl, uploadedBy || null, ticketId]
+      );
+
+      if (updateResult.rowCount === 0) {
+        return res.status(404).json({ error: "Ticket not found" });
+      }
+
+      const updated = updateResult.rows[0];
+      return res.json({
+        success: true,
+        ticket: updated,
+        repairedPhoto: {
+          url: updated.repaired_photo,
+          thumbUrl: updated.repaired_photo_thumb,
+          uploadedAt: updated.repaired_photo_uploaded_at,
+          uploadedBy: updated.repaired_photo_uploaded_by,
+        },
+      });
+    } catch (err) {
+      console.error("❌ Repaired photo upload failed:", err && err.stack ? err.stack : err);
+      return res.status(500).json({
+        error: "Failed to process repaired photo",
+        details: process.env.NODE_ENV === "development" ? err?.message || err : undefined,
+      });
+    }
+  }
+);
 
 // PATCH /api/tickets/:id  (update ticket)
 router.patch("/tickets/:id", async (req, res) => {
