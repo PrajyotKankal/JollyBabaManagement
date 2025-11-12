@@ -3,6 +3,8 @@ const ExcelJS = require("exceljs");
 const router = express.Router();
 const pool = require("./db");
 
+console.log("[khatabook router] module loaded – export handler active");
+
 router.use((req, res, next) => {
   console.log(`[khatabook router] ${req.method} ${req.path}`);
   next();
