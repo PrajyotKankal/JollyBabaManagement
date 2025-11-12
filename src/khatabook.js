@@ -39,6 +39,320 @@ function sanitizeNumber(value, fallback = 0) {
   return num;
 }
 
+function trimText(value) {
+  return (value ?? "").toString().trim();
+}
+
+function digitsOnly(value) {
+  return (value ?? "").toString().replace(/\D+/g, "");
+}
+
+function parsePaidFromRemarks(remarks) {
+  if (!remarks) return 0;
+  const match = /Paid\s*:?.*?₹?\s*([0-9][0-9,]*(?:\.[0-9]+)?)/i.exec(remarks);
+  if (!match) return 0;
+  const cleaned = match[1].replace(/,/g, "");
+  const parsed = Number.parseFloat(cleaned);
+  return Number.isFinite(parsed) ? parsed : 0;
+}
+
+function resolveDate(...values) {
+  for (const value of values) {
+    if (!value) continue;
+    const date = value instanceof Date ? value : new Date(value);
+    if (!Number.isNaN(date.getTime())) {
+      return date;
+    }
+  }
+  return new Date();
+}
+
+function clampAmount(total, paid) {
+  let safeTotal = Number.isFinite(total) ? total : 0;
+  let safePaid = Number.isFinite(paid) ? paid : 0;
+  if (safePaid < 0) safePaid = 0;
+  if (safePaid > safeTotal) safePaid = safeTotal;
+  return safePaid;
+}
+
+function toEntryStatus(remaining) {
+  return remaining <= 0.0001 ? "Settled" : "Pending";
+}
+
+function buildManualEntry(row) {
+  const name = trimText(row.name) || "Unknown";
+  const mobile = trimText(row.mobile);
+  const total = sanitizeNumber(row.amount, 0);
+  const paidRaw = sanitizeNumber(row.paid, 0);
+  const paid = clampAmount(total, paidRaw);
+  const remaining = Math.max(0, total - paid);
+  const entryDate = resolveDate(row.entry_date, row.updated_at, row.created_at);
+  const item = trimText(row.description) || "Manual entry";
+  const notes = trimText(row.note);
+
+  return {
+    type: "Manual",
+    name,
+    mobile,
+    entryDate,
+    total,
+    paid,
+    remaining,
+    status: toEntryStatus(remaining),
+    item,
+    srNo: "",
+    imei: "",
+    notes,
+  };
+}
+
+function buildSaleEntry(row) {
+  const name = trimText(row.customer_name) || "Customer";
+  const mobile = trimText(row.mobile_number);
+  const total = sanitizeNumber(row.sell_amount, 0);
+  const paidRaw = parsePaidFromRemarks(row.remarks);
+  const paid = clampAmount(total, paidRaw);
+  const remaining = Math.max(0, total - paid);
+  const entryDate = resolveDate(row.sell_date, row.updated_at, row.created_at, row.date);
+  const model = trimText(row.model);
+  const variant = trimText(row.variant_gb_color);
+  const itemParts = [];
+  if (model) itemParts.push(model);
+  if (variant) itemParts.push(variant);
+  const item = itemParts.length ? `Sale • ${itemParts.join(" • ")}` : `Sale • SR ${row.sr_no}`;
+  const notes = trimText(row.remarks);
+  const srNo = row.sr_no !== null && row.sr_no !== undefined ? String(row.sr_no) : "";
+  const imei = trimText(row.imei);
+
+  return {
+    type: "Sale",
+    name,
+    mobile,
+    entryDate,
+    total,
+    paid,
+    remaining,
+    status: toEntryStatus(remaining),
+    item,
+    srNo,
+    imei,
+    notes,
+  };
+}
+
+function combineEntries(manualRows, soldRows) {
+  const manualEntries = manualRows.map(buildManualEntry);
+  const saleEntries = soldRows.map(buildSaleEntry);
+  const combined = [...manualEntries, ...saleEntries];
+  combined.sort((a, b) => b.entryDate - a.entryDate);
+  return combined;
+}
+
+function groupEntriesForCustomers(entries) {
+  const groups = new Map();
+  let orphanCounter = 0;
+
+  for (const entry of entries) {
+    const digits = digitsOnly(entry.mobile);
+    const nameKey = trimText(entry.name).toLowerCase();
+    let key = digits || nameKey;
+    if (!key) {
+      key = `orphan-${orphanCounter++}`;
+    }
+
+    if (!groups.has(key)) {
+      groups.set(key, {
+        entries: [],
+        displayMobile: digits ? entry.mobile : "",
+        nameCounts: new Map(),
+        totalAmount: 0,
+        totalPaid: 0,
+        totalRemaining: 0,
+        latestDate: null,
+      });
+    }
+
+    const group = groups.get(key);
+    group.entries.push(entry);
+    const trimmedName = trimText(entry.name);
+    if (trimmedName) {
+      group.nameCounts.set(trimmedName, (group.nameCounts.get(trimmedName) || 0) + 1);
+    }
+    if (digits && !group.displayMobile) {
+      group.displayMobile = entry.mobile;
+    }
+    group.totalAmount += entry.total;
+    group.totalPaid += entry.paid;
+    group.totalRemaining += entry.remaining;
+    if (!group.latestDate || (entry.entryDate && entry.entryDate > group.latestDate)) {
+      group.latestDate = entry.entryDate;
+    }
+  }
+
+  return Array.from(groups.values()).map((group) => {
+    let chosenName = "Unknown";
+    if (group.nameCounts.size > 0) {
+      const sorted = Array.from(group.nameCounts.entries()).sort((a, b) => {
+        if (b[1] !== a[1]) return b[1] - a[1];
+        return a[0].localeCompare(b[0]);
+      });
+      chosenName = sorted[0][0];
+    } else if (group.entries.length > 0) {
+      chosenName = trimText(group.entries[0].name) || "Unknown";
+    }
+
+    const allSettled = group.entries.every((entry) => entry.status === "Settled");
+
+    return {
+      name: chosenName,
+      displayMobile: group.displayMobile,
+      entries: group.entries,
+      totalAmount: group.totalAmount,
+      totalPaid: group.totalPaid,
+      totalRemaining: group.totalRemaining,
+      status: allSettled ? "Settled" : "Pending",
+      latestDate: group.latestDate,
+      count: group.entries.length,
+    };
+  });
+}
+
+function summarizeByStatus(entries) {
+  const base = {
+    Pending: { count: 0, total: 0, paid: 0, outstanding: 0 },
+    Settled: { count: 0, total: 0, paid: 0, outstanding: 0 },
+  };
+
+  for (const entry of entries) {
+    const bucket = base[entry.status] || base.Pending;
+    bucket.count += 1;
+    bucket.total += entry.total;
+    bucket.paid += entry.paid;
+    bucket.outstanding += entry.remaining;
+  }
+
+  return base;
+}
+
+function toFixedNumber(value) {
+  return Number.isFinite(value) ? Number(value.toFixed(2)) : 0;
+}
+
+function formatDate(value) {
+  if (!value) return "";
+  const date = value instanceof Date ? value : new Date(value);
+  if (Number.isNaN(date.getTime())) return "";
+  return date.toISOString().slice(0, 10);
+}
+
+function buildWorkbook(entries) {
+  const workbook = new ExcelJS.Workbook();
+  const now = new Date();
+  workbook.created = now;
+  workbook.modified = now;
+
+  const summarySheet = workbook.addWorksheet("Summary");
+  summarySheet.columns = [
+    { header: "Status", key: "status", width: 14 },
+    { header: "Entries", key: "entries", width: 12 },
+    { header: "Total Amount", key: "totalAmount", width: 18, style: { numFmt: "#,##0.00" } },
+    { header: "Amount Paid", key: "amountPaid", width: 18, style: { numFmt: "#,##0.00" } },
+    { header: "Outstanding", key: "outstanding", width: 18, style: { numFmt: "#,##0.00" } },
+  ];
+
+  const summaries = summarizeByStatus(entries);
+  for (const status of ["Pending", "Settled"]) {
+    const bucket = summaries[status] || { count: 0, total: 0, paid: 0, outstanding: 0 };
+    summarySheet.addRow({
+      status,
+      entries: bucket.count,
+      totalAmount: toFixedNumber(bucket.total),
+      amountPaid: toFixedNumber(bucket.paid),
+      outstanding: toFixedNumber(bucket.outstanding),
+    });
+  }
+
+  const customersSheet = workbook.addWorksheet("Customers");
+  customersSheet.columns = [
+    { header: "Customer Name", key: "name", width: 28 },
+    { header: "Mobile", key: "mobile", width: 18 },
+    { header: "Entries", key: "entries", width: 10 },
+    { header: "Total Amount", key: "totalAmount", width: 16, style: { numFmt: "#,##0.00" } },
+    { header: "Amount Paid", key: "amountPaid", width: 16, style: { numFmt: "#,##0.00" } },
+    { header: "Outstanding", key: "outstanding", width: 16, style: { numFmt: "#,##0.00" } },
+    { header: "Status", key: "status", width: 12 },
+    { header: "Last Entry Date", key: "lastDate", width: 16 },
+  ];
+
+  const customerGroups = groupEntriesForCustomers(entries);
+  for (const group of customerGroups) {
+    customersSheet.addRow({
+      name: group.name,
+      mobile: group.displayMobile,
+      entries: group.count,
+      totalAmount: toFixedNumber(group.totalAmount),
+      amountPaid: toFixedNumber(group.totalPaid),
+      outstanding: toFixedNumber(group.totalRemaining),
+      status: group.status,
+      lastDate: formatDate(group.latestDate),
+    });
+  }
+
+  const entriesSheet = workbook.addWorksheet("Entries");
+  entriesSheet.columns = [
+    { header: "Date", key: "date", width: 14 },
+    { header: "Customer Name", key: "name", width: 26 },
+    { header: "Mobile", key: "mobile", width: 18 },
+    { header: "Pending/Settled", key: "status", width: 16 },
+    { header: "Entry Type", key: "type", width: 12 },
+    { header: "Item / Model", key: "item", width: 30 },
+    { header: "SR No", key: "srNo", width: 12 },
+    { header: "IMEI", key: "imei", width: 20 },
+    { header: "Total Amount", key: "totalAmount", width: 16, style: { numFmt: "#,##0.00" } },
+    { header: "Amount Paid", key: "amountPaid", width: 16, style: { numFmt: "#,##0.00" } },
+    { header: "Outstanding", key: "outstanding", width: 16, style: { numFmt: "#,##0.00" } },
+    { header: "Notes", key: "notes", width: 40 },
+  ];
+
+  for (const entry of entries) {
+    entriesSheet.addRow({
+      date: formatDate(entry.entryDate),
+      name: trimText(entry.name) || "Unknown",
+      mobile: trimText(entry.mobile),
+      status: entry.status,
+      type: entry.type,
+      item: entry.item || "-",
+      srNo: entry.srNo || "",
+      imei: entry.imei || "",
+      totalAmount: toFixedNumber(entry.total),
+      amountPaid: toFixedNumber(entry.paid),
+      outstanding: toFixedNumber(entry.remaining),
+      notes: entry.notes || "",
+    });
+  }
+
+  return workbook;
+}
+
+async function fetchManualEntriesForExport() {
+  const { rows } = await pool.query(
+    `SELECT id, name, mobile, amount, paid, description, note, entry_date, created_at, updated_at
+       FROM khatabook_entries
+       ORDER BY entry_date DESC NULLS LAST, id DESC`
+  );
+  return rows;
+}
+
+async function fetchSoldEntriesForExport() {
+  const { rows } = await pool.query(
+    `SELECT sr_no, customer_name, mobile_number, sell_amount::float AS sell_amount, remarks,
+            model, variant_gb_color, imei, sell_date, date, created_at, updated_at
+       FROM inventory_items
+      WHERE status = 'SOLD'`
+  );
+  return rows;
+}
+
 router.get("/khatabook", async (req, res) => {
   try {
     const { rows } = await pool.query(
@@ -50,6 +364,38 @@ router.get("/khatabook", async (req, res) => {
   } catch (err) {
     console.error("GET /khatabook error", err);
     return res.status(500).json({ error: "LIST_FAILED" });
+  }
+});
+
+router.get("/khatabook/export", async (req, res) => {
+  try {
+    const [manualRows, soldRows] = await Promise.all([
+      fetchManualEntriesForExport(),
+      fetchSoldEntriesForExport(),
+    ]);
+
+    const entries = combineEntries(manualRows, soldRows);
+    const workbook = buildWorkbook(entries);
+    const timestamp = new Date().toISOString().replace(/[-:T]/g, "").slice(0, 14);
+
+    res.setHeader(
+      "Content-Type",
+      "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    );
+    res.setHeader(
+      "Content-Disposition",
+      `attachment; filename="khatabook-${timestamp}.xlsx"`
+    );
+
+    await workbook.xlsx.write(res);
+    res.end();
+  } catch (err) {
+    console.error("GET /khatabook/export error", err);
+    if (!res.headersSent) {
+      res.status(500).json({ error: "EXPORT_FAILED" });
+    } else {
+      res.end();
+    }
   }
 });
 
