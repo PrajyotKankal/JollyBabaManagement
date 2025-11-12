@@ -374,9 +374,15 @@ router.get("/khatabook/export", async (req, res) => {
       fetchSoldEntriesForExport(),
     ]);
 
+    console.log(
+      `[khatabook export] fetched ${manualRows.length} manual entries and ${soldRows.length} sold entries`
+    );
+
     const entries = combineEntries(manualRows, soldRows);
     const workbook = buildWorkbook(entries);
     const timestamp = new Date().toISOString().replace(/[-:T]/g, "").slice(0, 14);
+
+    console.log(`[khatabook export] building workbook with ${entries.length} combined rows`);
 
     res.setHeader(
       "Content-Type",
@@ -388,6 +394,7 @@ router.get("/khatabook/export", async (req, res) => {
     );
 
     await workbook.xlsx.write(res);
+    console.log("[khatabook export] workbook stream complete");
     res.end();
   } catch (err) {
     console.error("GET /khatabook/export error", err);
