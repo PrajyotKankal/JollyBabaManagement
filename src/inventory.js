@@ -237,9 +237,22 @@ router.get('/inventory', async (req, res) => {
     const sortOrder = String(order).toLowerCase() === 'asc' ? 'ASC' : 'DESC';
 
     const { rows } = await pool.query(
-      `SELECT sr_no, to_char(date,'YYYY-MM-DD') as date, brand, model, imei, variant_gb_color, vendor_purchase, 
-              vendor_phone, purchase_amount::float, to_char(sell_date,'YYYY-MM-DD') as sell_date, sell_amount::float,
-              customer_name, mobile_number, remarks, status
+      `SELECT sr_no,
+              to_char(date,'YYYY-MM-DD') as date,
+              brand,
+              model,
+              imei,
+              variant_gb_color,
+              vendor_purchase,
+              vendor_phone,
+              purchase_amount::float,
+              to_char(sell_date,'YYYY-MM-DD') as sell_date,
+              sell_amount::float,
+              customer_name,
+              mobile_number,
+              remarks,
+              status,
+              khatabook_entry_id
          FROM inventory_items ${where}
          ORDER BY ${sortCol} ${sortOrder}, sr_no DESC`,
       params
