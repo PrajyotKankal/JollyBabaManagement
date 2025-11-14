@@ -41,3 +41,15 @@ ios/Flutter/.last_build_id
 .env
 .env.local
 .env.*.local
+
+# ignore backup git metadata and any inner git dirs
+.git_backup/
+**/.git_backup/
+**/.git
+
+
+# ignore backup git metadata and any inner git dirs
+.git_backup/
+**/.git_backup/
+**/.git
+

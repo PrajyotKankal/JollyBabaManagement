@@ -1,4 +1,0 @@
-0000000000000000000000000000000000000000 26421ef59737aaa5015f4fc23f15421a3d613f83 Prajyot Kankal <youremail@example.com> 1762642356 +0530	commit (initial): Initial commit (fresh start)
-26421ef59737aaa5015f4fc23f15421a3d613f83 26421ef59737aaa5015f4fc23f15421a3d613f83 Prajyot Kankal <youremail@example.com> 1762642357 +0530	Branch: renamed refs/heads/main to refs/heads/main
-26421ef59737aaa5015f4fc23f15421a3d613f83 ea27384d7b04ed0b63de722b4233854f28c5f1f9 Prajyot Kankal <youremail@example.com> 1762766373 +0530	commit: Added the suggestion for sell and add stock section
-ea27384d7b04ed0b63de722b4233854f28c5f1f9 f477a35c5ccdc7e43e92e644773178cca97f2d3a Prajyot Kankal <youremail@example.com> 1762946999 +0530	commit: Added the functionality of the download excel sheet of the khatabook
