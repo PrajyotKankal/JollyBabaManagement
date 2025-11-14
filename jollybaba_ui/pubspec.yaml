@@ -1,0 +1,88 @@
+name: jollybaba_ui
+description: "A new Flutter project."
+publish_to: 'none'
+
+version: 1.0.0+1
+
+environment:
+  sdk: ">=3.3.0 <4.0.0"
+
+dependencies:
+  flutter:
+    sdk: flutter
+
+  # Core UI / Design
+  cupertino_icons: ^1.0.8
+  google_fonts: ^6.1.0
+  flutter_animate: ^4.5.0
+  gradient_borders: ^1.0.1
+
+  # Navigation / Layout / Charts
+  google_nav_bar: ^5.0.7
+  curved_navigation_bar: ^1.0.3
+  fl_chart: ^1.1.1
+
+  # State & Utilities
+  get: ^4.6.6
+  intl: ^0.20.2
+  vector_math: ^2.1.4
+
+  # Networking
+  dio: ^5.4.0
+  http: ^1.2.2
+
+  # Storage & Preferences
+  flutter_secure_storage: ^9.2.2
+  shared_preferences: ^2.3.3
+  path_provider: ^2.1.4
+  file_picker: ^8.1.2
+  csv: ^6.0.0
+  excel: ^4.0.6
+
+  # Images & Media
+  image_picker: ^1.0.7
+  flutter_image_compress: ^2.1.0
+  photo_view: ^0.15.0
+  mobile_scanner: ^3.5.5
+
+  # Icons
+  font_awesome_flutter: ^10.7.0
+
+  # URL launching & sharing
+  url_launcher: ^6.3.0
+  share_plus: ^7.2.1
+
+  # PDF generation / printing
+  pdf: ^3.11.0
+  printing: ^5.13.0
+
+  # Supabase + env
+  supabase_flutter: ^2.10.3
+  flutter_dotenv: ^6.0.0
+  sign_in_with_apple: ^6.1.0
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^6.0.0
+  flutter_launcher_icons: ^0.14.1
+
+flutter:
+  uses-material-design: true
+
+flutter_launcher_icons:
+  android: true
+  ios: true
+  remove_alpha_ios: true
+  image_path: assets/app_icon.png
+  web:
+    generate: true
+    image_path: assets/app_icon.png
+  windows:
+    generate: true
+    image_path: assets/app_icon.png
+  macos:
+    generate: true
+    image_path: assets/app_icon.png
+  linux:
+    generate: true
