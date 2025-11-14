@@ -1,0 +1,43 @@
+# macOS
+.DS_Store
+
+# Windows
+Thumbs.db
+desktop.ini
+
+# Node
+node_modules/
+npm-debug.log*
+yarn-error.log
+dist/
+build/
+
+# Flutter
+.dart_tool/
+.packages
+.pub-cache/
+build/
+.flutter-plugins
+.flutter-plugins-dependencies
+GeneratedPluginRegistrant.*
+
+# Android Studio / IntelliJ
+*.iml
+.gradle/
+local.properties
+/.idea/
+
+# iOS
+Pods/
+ios/Flutter/.last_build_id
+
+# VSCode
+.vscode/
+
+# Logs
+*.log
+
+# Env files
+.env
+.env.local
+.env.*.local
