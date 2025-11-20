@@ -15,7 +15,22 @@ const app = express();
 const port = process.env.PORT || 5000;
 const DEBUG_EXIT = process.env.DEBUG_EXIT === "true";
 
-console.log("NODE_ENV:", process.env.NODE_ENV || "development");
+// Deployment information
+const deploymentInfo = {
+  timestamp: new Date().toISOString(),
+  nodeEnv: process.env.NODE_ENV || 'development',
+  commitHash: process.env.COMMIT_HASH || 'local',
+  version: process.env.APP_VERSION || '1.0.0'
+};
+
+console.log('\n' + '='.repeat(60));
+console.log('🚀 JollyBaba Backend Service');
+console.log('='.repeat(60));
+console.log(`🕒 Deployment Time: ${deploymentInfo.timestamp}`);
+console.log(`🌐 Environment: ${deploymentInfo.nodeEnv}`);
+console.log(`🔖 Version: ${deploymentInfo.version}`);
+console.log(`🔄 Commit: ${deploymentInfo.commitHash}`);
+console.log('='.repeat(60) + '\n');
 
 // ---------- Process lifecycle / crash instrumentation ----------
 const originalExit = process.exit.bind(process);
