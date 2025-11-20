@@ -24,7 +24,7 @@ const deploymentInfo = {
 };
 
 console.log('\n' + '='.repeat(60));
-console.log('🚀 JollyBaba Backend Service');
+console.log('🚀 JollyBaba Backend Service Deploy Backend');
 console.log('='.repeat(60));
 console.log(`🕒 Deployment Time: ${deploymentInfo.timestamp}`);
 console.log(`🌐 Environment: ${deploymentInfo.nodeEnv}`);
