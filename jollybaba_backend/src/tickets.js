@@ -43,6 +43,140 @@ function inferUploadedBy(user = {}) {
   return null;
 }
 
+function extractWorkerIdentity(user = {}) {
+  if (!user) return null;
+  const email = user.email ? user.email.toString().toLowerCase() : null;
+  const name = user.name ? user.name.toString() : null;
+  let id = null;
+  if (Number.isInteger(user.id)) {
+    id = user.id;
+  } else if (user.id !== undefined && user.id !== null) {
+    const parsed = parseInt(user.id, 10);
+    if (!Number.isNaN(parsed)) id = parsed;
+  }
+  if (!email && !name && (id === null || Number.isNaN(id))) {
+    return null;
+  }
+  return { email, name, id };
+}
+
+function buildWorkLogEntry(identity, action, extras = {}) {
+  if (!identity) return null;
+  const timestamp = extras.timestamp || new Date().toISOString();
+  const entry = {
+    action,
+    at: timestamp,
+    user: {
+      email: identity.email || null,
+      name: identity.name || null,
+      id: identity.id,
+    },
+  };
+  if (extras.notes) entry.notes = extras.notes;
+  return entry;
+}
+
+function identityFromBody(body = {}) {
+  if (!body) return null;
+  const email = body.worked_by_email ? body.worked_by_email.toString().toLowerCase().trim() : null;
+  const name = body.worked_by_name ? body.worked_by_name.toString().trim() : null;
+  let id = null;
+  if (body.worked_by_id !== undefined && body.worked_by_id !== null && `${body.worked_by_id}`.trim().length > 0) {
+    const parsed = parseInt(body.worked_by_id, 10);
+    if (!Number.isNaN(parsed)) id = parsed;
+  }
+  if (!email && !name && id === null) return null;
+  return { email, name, id };
+}
+
+function normalizeIsoTimestamp(value) {
+  if (!value) return new Date().toISOString();
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) return new Date().toISOString();
+  return parsed.toISOString();
+}
+
+function parseNotesPayload(raw) {
+  if (typeof raw === "undefined") {
+    return { provided: false, notes: null };
+  }
+  let notes = raw;
+  if (typeof notes === "string") {
+    try {
+      notes = JSON.parse(notes);
+    } catch (_) {
+      notes = [];
+    }
+  }
+  if (!Array.isArray(notes)) {
+    notes = [];
+  }
+  return { provided: true, notes };
+}
+
+function normalizeBooleanQuery(value) {
+  if (typeof value === "boolean") return value;
+  if (value === undefined || value === null) return false;
+  const normalized = value.toString().trim().toLowerCase();
+  return ["1", "true", "yes", "y", "on", "enabled", "mine", "me", "assigned", "own"].includes(normalized);
+}
+
+async function updateTicketWithWorklog({
+  id,
+  status,
+  notes,
+  notesProvided = false,
+  deliveryPhoto1,
+  deliveryPhoto2,
+  actingIdentity,
+  workAction,
+  workNotes,
+  workedAt,
+}) {
+  if (!id) throw new Error("Ticket id is required for update");
+  await ensureWorkLogColumns();
+
+  const notesJson = notesProvided ? JSON.stringify(Array.isArray(notes) ? notes : []) : null;
+  const worker = actingIdentity || null;
+  const effectiveAction = workAction || (status ? `status:${status}` : "update");
+  const timestamp = worker ? normalizeIsoTimestamp(workedAt) : null;
+  const workEntry = worker
+    ? buildWorkLogEntry(worker, effectiveAction, { notes: workNotes, timestamp })
+    : null;
+  const workLogPayload = workEntry ? JSON.stringify([workEntry]) : null;
+
+  const queryText = `
+    UPDATE tickets
+    SET status = COALESCE($1, status),
+        notes = COALESCE($2::jsonb, notes),
+        delivery_photo_1 = COALESCE($3, delivery_photo_1),
+        delivery_photo_2 = COALESCE($4, delivery_photo_2),
+        last_worked_by_email = COALESCE($5, last_worked_by_email),
+        last_worked_by_name = COALESCE($6, last_worked_by_name),
+        last_worked_by_id = COALESCE($7, last_worked_by_id),
+        last_worked_at = COALESCE($8, last_worked_at),
+        work_log = CASE WHEN $9::jsonb IS NULL THEN work_log ELSE COALESCE(work_log, '[]'::jsonb) || $9::jsonb END,
+        updated_at = now()
+    WHERE id = $10
+    RETURNING *;
+  `;
+
+  const params = [
+    status || null,
+    notesJson,
+    deliveryPhoto1 || null,
+    deliveryPhoto2 || null,
+    worker?.email || null,
+    worker?.name || null,
+    typeof worker?.id === "number" ? worker.id : null,
+    timestamp,
+    workLogPayload,
+    id,
+  ];
+
+  return runQueryWithAddTimestampsOnMissingColumn(queryText, params);
+}
+
 function uploadBufferToCloudinary(buffer, options) {
   if (!CLOUDINARY_CONFIGURED) {
     return Promise.reject(new Error("Cloudinary not configured"));
@@ -232,6 +366,19 @@ async function ensureAssignmentColumns() {
   }
 }
 
+async function ensureWorkLogColumns() {
+  if (!pool || typeof pool.query !== "function") return;
+  try {
+    await pool.query(`ALTER TABLE tickets ADD COLUMN IF NOT EXISTS last_worked_by_email TEXT;`);
+    await pool.query(`ALTER TABLE tickets ADD COLUMN IF NOT EXISTS last_worked_by_name TEXT;`);
+    await pool.query(`ALTER TABLE tickets ADD COLUMN IF NOT EXISTS last_worked_by_id INTEGER;`);
+    await pool.query(`ALTER TABLE tickets ADD COLUMN IF NOT EXISTS last_worked_at TIMESTAMP;`);
+    await pool.query(`ALTER TABLE tickets ADD COLUMN IF NOT EXISTS work_log JSONB DEFAULT '[]'::jsonb;`);
+  } catch (err) {
+    console.warn("⚠️ ensureWorkLogColumns failed (continuing):", err && err.stack ? err.stack : err);
+  }
+}
+
 // GET /api/tickets
 // - Admins see all tickets
 // - Technicians see only tickets assigned to them OR tickets they created (by email preferred, fallback to name)
@@ -245,6 +392,7 @@ router.get("/tickets", authMiddleware, async (req, res) => {
   try {
     await ensureCreatorColumns();
     await ensureAssignmentColumns();
+    await ensureWorkLogColumns();
     const user = req.user || {};
     const role = (user.role || "").toString().toLowerCase().trim();
     const email = (user.email || "").toString().toLowerCase().trim();
@@ -253,6 +401,12 @@ router.get("/tickets", authMiddleware, async (req, res) => {
     const page = Math.max(1, parseInt(req.query.page || "1", 10) || 1);
     const perPage = Math.min(200, Math.max(10, parseInt(req.query.perPage || "100", 10) || 100));
     const offset = (page - 1) * perPage;
+    const mineOnly = normalizeBooleanQuery(
+      req.query.mineOnly ?? req.query.onlyMine ?? req.query.assigned ?? req.query.mine ?? req.query.my
+    );
+    const pendingOnly = normalizeBooleanQuery(req.query.pendingOnly ?? req.query.onlyPending ?? req.query.pending);
+    const rawStatusFilter = (req.query.status || "").toString().trim().toLowerCase();
+    const statusFilter = pendingOnly ? "pending" : rawStatusFilter;
 
     // Admins see everything (paginated)
     if (role === "admin" || role === "administrator") {
@@ -261,13 +415,31 @@ router.get("/tickets", authMiddleware, async (req, res) => {
       return res.json({ success: true, data: result.rows, page, perPage });
     }
 
-    // For technicians: try to match by email and name loosely to cover legacy data
+    // For technicians: allow optional mine-only filter, otherwise show shared queue
     {
       const userId = (user.id && Number.isInteger(user.id)) ? user.id : (parseInt(user.id, 10) || null);
+      if (!mineOnly) {
+        const clauses = [];
+        const params = [];
+        let idx = 1;
+        if (statusFilter) {
+          clauses.push(`lower(coalesce(status, '')) = $${idx}`);
+          params.push(statusFilter);
+          idx++;
+        }
+
+        const whereSql = clauses.length ? `WHERE ${clauses.join(' AND ')}` : '';
+        const orderSql = `ORDER BY (CASE WHEN lower(coalesce(status, '')) = 'pending' THEN 0 ELSE 1 END), updated_at DESC NULLS LAST, id DESC`;
+        const q = `SELECT * FROM tickets ${whereSql} ${orderSql} LIMIT $${idx} OFFSET $${idx + 1}`;
+        params.push(perPage, offset);
+        const result = await runQueryWithAddTimestampsOnMissingColumn(q, params);
+        return res.json({ success: true, data: result.rows, page, perPage });
+      }
+
       if (!email && !name && !userId) {
-        // No identifiers at all
         return res.json({ success: true, data: [], page, perPage });
       }
+
       const needles = [];
       if (email && email.length > 0) {
         needles.push(`%${email}%`);
@@ -280,7 +452,6 @@ router.get("/tickets", authMiddleware, async (req, res) => {
         for (const p of parts) needles.push(`%${p}%`);
       }
 
-      // Build dynamic WHERE with safe params
       const whereParts = [];
       const params = [];
       let idx = 1;
@@ -295,31 +466,26 @@ router.get("/tickets", authMiddleware, async (req, res) => {
         return exprs;
       };
 
-      // Only include columns that actually exist in the DB
       const available = await getTicketsColumns();
 
-      // Assignment fields (strings)
       ['assigned_technician', 'assigned_technician_email', 'assigned_to'].forEach(col => {
         if (!available.has(col)) return;
         const exprs = likeExprsFor(col);
         if (exprs.length) whereParts.push(`(${exprs.join(' OR ')})`);
       });
 
-      // Creator fields (strings)
       ['created_by_email', 'created_by_name'].forEach(col => {
         if (!available.has(col)) return;
         const exprs = likeExprsFor(col);
         if (exprs.length) whereParts.push(`(${exprs.join(' OR ')})`);
       });
 
-      // Creator id exact match
       if (userId && available.has('created_by_id')) {
         whereParts.push(`created_by_id = $${idx}`);
         params.push(userId);
         idx++;
       }
 
-      // If no string needles, but we have userId, still proceed with creator_id filter only
       if (whereParts.length === 0 && !userId) {
         return res.json({ success: true, data: [], page, perPage });
       }
@@ -333,7 +499,7 @@ router.get("/tickets", authMiddleware, async (req, res) => {
       `;
       params.push(perPage, offset);
 
-      console.log('[tickets] GET /tickets filter', {
+      console.log('[tickets] GET /tickets filter (mineOnly)', {
         email,
         name,
         userId,
@@ -341,35 +507,8 @@ router.get("/tickets", authMiddleware, async (req, res) => {
         paramsPreview: params.map((p) => (typeof p === 'string' ? p.slice(0, 64) : p)),
       });
 
-      try {
-        const result = await runQueryWithAddTimestampsOnMissingColumn(q, params);
-        return res.json({ success: true, data: result.rows, page, perPage });
-      } catch (sqlErr) {
-        console.warn('⚠️ SQL filter failed, falling back to JS-side filter:', sqlErr && sqlErr.stack ? sqlErr.stack : sqlErr);
-        // Fallback: fetch a page and filter in JS
-        const raw = await runQueryWithAddTimestampsOnMissingColumn(
-          `SELECT * FROM tickets ORDER BY id DESC LIMIT $1 OFFSET $2`,
-          [perPage, offset]
-        );
-        const rows = raw.rows || [];
-        const needlesLower = needles.map((n) => String(n).toLowerCase().replace(/%/g, ''));
-        const matchText = (val) => {
-          const s = String(val || '').toLowerCase();
-          return needlesLower.some((needle) => needle && s.includes(needle));
-        };
-        const filtered = rows.filter((t) => {
-          const aTech = t.assigned_technician;
-          const aEmail = t.assigned_technician_email;
-          const aTo = t.assigned_to;
-          const cEmail = t.created_by_email;
-          const cName = t.created_by_name;
-          const cId = t.created_by_id;
-          const assigneeHit = matchText(aTech) || matchText(aEmail) || matchText(aTo);
-          const creatorHit = matchText(cEmail) || matchText(cName) || (userId && cId === userId);
-          return assigneeHit || creatorHit;
-        });
-        return res.json({ success: true, data: filtered, page, perPage });
-      }
+      const result = await runQueryWithAddTimestampsOnMissingColumn(q, params);
+      return res.json({ success: true, data: result.rows, page, perPage });
     }
   } catch (err) {
     console.error("❌ Error fetching tickets:", err && err.stack ? err.stack : err);
@@ -601,36 +740,34 @@ router.post(
 );
 
 // PATCH /api/tickets/:id  (update ticket)
-router.patch("/tickets/:id", async (req, res) => {
+router.patch("/tickets/:id", authMiddleware, async (req, res) => {
   if (!pool || typeof pool.query !== "function") {
     return res.status(500).json({ error: "Database not available" });
   }
 
   try {
     const { id } = req.params;
-    let { status, notes, delivery_photo_1, delivery_photo_2 } = req.body || {};
+    const { provided: notesProvided, notes } = parseNotesPayload(req.body?.notes);
+    const actingIdentity = identityFromBody(req.body) || extractWorkerIdentity(req.user);
+    const workAction = req.body?.work_action || null;
+    const workNotes = req.body?.work_notes || null;
+    const workedAt = req.body?.worked_at || req.body?.last_worked_at || null;
+    const status = req.body?.status;
+    const deliveryPhoto1 = req.body?.delivery_photo_1;
+    const deliveryPhoto2 = req.body?.delivery_photo_2;
 
-    if (typeof notes === "string") {
-      try {
-        notes = JSON.parse(notes);
-      } catch {
-        notes = [];
-      }
-    }
-    if (!Array.isArray(notes)) notes = [];
-
-    const queryText = `
-      UPDATE tickets
-      SET status = COALESCE($1, status),
-          notes = COALESCE($2::jsonb, notes),
-          delivery_photo_1 = COALESCE($3, delivery_photo_1),
-          delivery_photo_2 = COALESCE($4, delivery_photo_2),
-          updated_at = now()
-      WHERE id = $5
-      RETURNING *;
-    `;
-
-    const result = await runQueryWithAddTimestampsOnMissingColumn(queryText, [status || null, JSON.stringify(notes), delivery_photo_1 || null, delivery_photo_2 || null, id]);
+    const result = await updateTicketWithWorklog({
+      id,
+      status,
+      notes,
+      notesProvided,
+      deliveryPhoto1,
+      deliveryPhoto2,
+      actingIdentity,
+      workAction,
+      workNotes,
+      workedAt,
+    });
 
     if (result.rowCount === 0) return res.status(404).json({ error: "Ticket not found" });
     return res.json({ success: true, ticket: result.rows[0] });
@@ -641,14 +778,15 @@ router.patch("/tickets/:id", async (req, res) => {
 });
 
 // POST /api/tickets/:id/update (multipart) - used to upload delivery photo
-router.post("/tickets/:id/update", upload.single("delivery_photo_2"), async (req, res) => {
+router.post("/tickets/:id/update", authMiddleware, upload.single("delivery_photo_2"), async (req, res) => {
   if (!pool || typeof pool.query !== "function") {
     return res.status(500).json({ error: "Database not available" });
   }
 
   try {
     const { id } = req.params;
-    let { status, notes } = req.body || {};
+    const status = req.body?.status;
+    const { provided: notesProvided, notes } = parseNotesPayload(req.body?.notes);
     let delivery_photo_2 = null;
 
     if (req.file) {
@@ -657,26 +795,22 @@ router.post("/tickets/:id/update", upload.single("delivery_photo_2"), async (req
       console.log(`📸 Uploaded photo for ticket ${id}: ${delivery_photo_2}`);
     }
 
-    if (typeof notes === "string") {
-      try {
-        notes = JSON.parse(notes);
-      } catch {
-        notes = [];
-      }
-    }
-    if (!Array.isArray(notes)) notes = [];
+    const actingIdentity = identityFromBody(req.body) || extractWorkerIdentity(req.user);
+    const workAction = req.body?.work_action || (delivery_photo_2 ? "delivery_photo" : null);
+    const workNotes = req.body?.work_notes || null;
+    const workedAt = req.body?.worked_at || req.body?.last_worked_at || null;
 
-    const queryText = `
-      UPDATE tickets
-      SET status = COALESCE($1, status),
-          notes = COALESCE($2::jsonb, notes),
-          delivery_photo_2 = COALESCE($3, delivery_photo_2),
-          updated_at = now()
-      WHERE id = $4
-      RETURNING *;
-    `;
-
-    const result = await runQueryWithAddTimestampsOnMissingColumn(queryText, [status || null, JSON.stringify(notes), delivery_photo_2 || null, id]);
+    const result = await updateTicketWithWorklog({
+      id,
+      status,
+      notes,
+      notesProvided,
+      deliveryPhoto2: delivery_photo_2,
+      actingIdentity,
+      workAction,
+      workNotes,
+      workedAt,
+    });
 
     if (result.rowCount === 0) return res.status(404).json({ error: "Ticket not found" });
     return res.json({ success: true, ticket: result.rows[0] });
