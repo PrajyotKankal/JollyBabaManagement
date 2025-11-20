@@ -49,6 +49,7 @@ class TicketDetailsController extends GetxController {
   bool isAdmin = false;
   bool isTechnician = false;
   bool isAssignedTechnician = false;
+  Map<String, dynamic>? _currentUser;
 
   // Derived edit flags (set in _loadUserPermissions)
   bool canEditNotes = false;
@@ -220,6 +221,8 @@ class TicketDetailsController extends GetxController {
         return;
       }
 
+      _currentUser = me;
+
       final role = (me['role'] ?? '').toString().toLowerCase();
       final email = (me['email'] ?? me['username'] ?? '')
           .toString()
@@ -242,8 +245,9 @@ class TicketDetailsController extends GetxController {
       isAssignedTechnician =
           isTechnician && email.isNotEmpty && email == assignedEmail;
 
-      canEditNotes = isAdmin || isAssignedTechnician;
-      canEditStatus = isAdmin || isAssignedTechnician;
+      // Allow any technician to edit, but keep admin override
+      canEditNotes = isAdmin || isTechnician;
+      canEditStatus = isAdmin || isTechnician;
     } catch (e, st) {
       debugPrint('Permission load failed: $e\n$st');
       isAdmin = false;
@@ -633,6 +637,17 @@ class TicketDetailsController extends GetxController {
     isSaving.value = true;
     update();
 
+    Map<String, dynamic>? actingIdentity;
+    final me = _currentUser;
+    if (me != null) {
+      actingIdentity = {
+        'worked_by_email': (me['email'] ?? me['username'] ?? '').toString().trim(),
+        'worked_by_name': (me['name'] ?? '').toString().trim(),
+      };
+      final idVal = me['id'];
+      if (idVal != null) actingIdentity['worked_by_id'] = idVal;
+    }
+
     final payload = <String, dynamic>{
       'status': status,
       'notes': notesList
@@ -643,6 +658,9 @@ class TicketDetailsController extends GetxController {
             },
           )
           .toList(),
+      if (actingIdentity != null) ...actingIdentity,
+      if (actingIdentity != null) 'work_action': 'status:$status',
+      if (actingIdentity != null) 'worked_at': DateTime.now().toIso8601String(),
     };
 
     debugPrint('saveTicketStatus: payload => $payload');

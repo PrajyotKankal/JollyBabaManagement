@@ -5,6 +5,7 @@ import 'package:get/get.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:flutter_animate/flutter_animate.dart';
 import 'package:url_launcher/url_launcher.dart';
+import 'package:intl/intl.dart';
 
 import 'ticket_details_controller.dart';
 import 'widgets/customer_info_card.dart';
@@ -314,9 +315,20 @@ class _TicketDetailsScreenState extends State<TicketDetailsScreen> {
   Widget _buildCreatorAssignedRow(TicketDetailsController controller) {
     final created = controller.createdBy.trim();
     final assigned = controller.assignedTechnician.trim();
+    final workedBy = (controller.ticket['last_worked_by_name'] ?? controller.ticket['last_worked_by_email'] ?? '')
+        .toString()
+        .trim();
+    final workedAtRaw = controller.ticket['last_worked_at']?.toString() ?? '';
+    DateTime? workedAt;
+    if (workedAtRaw.isNotEmpty) {
+      try {
+        workedAt = DateTime.parse(workedAtRaw).toLocal();
+      } catch (_) {}
+    }
+    final workedWhen = workedAt != null ? DateFormat('MMM d, h:mm a').format(workedAt) : null;
 
     // If both missing, return empty space so layout unchanged
-    if (created.isEmpty && assigned.isEmpty) {
+    if (created.isEmpty && assigned.isEmpty && workedBy.isEmpty) {
       return const SizedBox.shrink();
     }
 
@@ -350,6 +362,25 @@ class _TicketDetailsScreenState extends State<TicketDetailsScreen> {
                   Flexible(
                     child: Text(
                       'Assigned: $assigned',
+                      overflow: TextOverflow.ellipsis,
+                      style: GoogleFonts.poppins(fontSize: 13, color: const Color(0xFF2A2E45)),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          if (workedBy.isNotEmpty) const SizedBox(width: 12),
+          if (workedBy.isNotEmpty)
+            Expanded(
+              child: Row(
+                children: [
+                  const Icon(Icons.handyman_outlined, size: 16, color: Color(0xFF6D5DF6)),
+                  const SizedBox(width: 8),
+                  Flexible(
+                    child: Text(
+                      workedWhen != null
+                          ? 'Last worked by $workedBy • $workedWhen'
+                          : 'Last worked by $workedBy',
                       overflow: TextOverflow.ellipsis,
                       style: GoogleFonts.poppins(fontSize: 13, color: const Color(0xFF2A2E45)),
                     ),

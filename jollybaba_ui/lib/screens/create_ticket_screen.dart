@@ -6,6 +6,7 @@ import 'package:google_fonts/google_fonts.dart';
 import 'package:flutter_animate/flutter_animate.dart';
 import 'package:get/get.dart';
 import 'package:image_picker/image_picker.dart';
+import 'package:mobile_scanner/mobile_scanner.dart';
 
 import '../services/ticket_service.dart';
 import '../services/auth_service.dart';
@@ -38,6 +39,9 @@ class _CreateTicketScreenState extends State<CreateTicketScreen>
   final estimatedCost = TextEditingController();
   final lockCode = TextEditingController();
   DateTime? repairDate;
+
+  bool _isScanning = false;
+  MobileScannerController? _scannerController;
 
   // Technician dropdown state
   List<Map<String, dynamic>> _technicians = [];
@@ -160,6 +164,7 @@ class _CreateTicketScreenState extends State<CreateTicketScreen>
     issueDesc.dispose();
     estimatedCost.dispose();
     lockCode.dispose();
+    _scannerController?.dispose();
     super.dispose();
   }
 
@@ -571,7 +576,15 @@ class _CreateTicketScreenState extends State<CreateTicketScreen>
           children: [
             _buildField("Device Model", deviceModel),
             const SizedBox(height: 12),
-            _buildField("IMEI Number", imei),
+            _buildField(
+              "IMEI Number",
+              imei,
+              suffix: IconButton(
+                tooltip: 'Scan IMEI',
+                icon: const Icon(Icons.camera_alt_outlined, color: Color(0xFF6D5DF6)),
+                onPressed: _startImeiScan,
+              ),
+            ),
             const SizedBox(height: 12),
             _buildField("Issue Description", issueDesc, lines: 3),
             const SizedBox(height: 8),
@@ -710,7 +723,7 @@ class _CreateTicketScreenState extends State<CreateTicketScreen>
     );
   }
 
-  Widget _buildField(String hint, TextEditingController controller, {TextInputType keyboard = TextInputType.text, int lines = 1}) {
+  Widget _buildField(String hint, TextEditingController controller, {TextInputType keyboard = TextInputType.text, int lines = 1, Widget? suffix}) {
     return TextFormField(
       controller: controller,
       keyboardType: keyboard,
@@ -723,9 +736,224 @@ class _CreateTicketScreenState extends State<CreateTicketScreen>
         filled: true,
         fillColor: const Color(0xFFF8F9FF),
         contentPadding: const EdgeInsets.symmetric(vertical: 14, horizontal: 12),
+        suffixIcon: suffix,
         enabledBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(10), borderSide: const BorderSide(color: Color(0xFFE3E6EF), width: 1.2)),
         focusedBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(10), borderSide: const BorderSide(color: Color(0xFF6D5DF6), width: 1.5)),
       ),
     );
   }
+
+  void _startImeiScan() {
+    if (_isScanning) return;
+    final detectionHits = <String, int>{};
+    var invalidShown = false;
+    const defaultHitThreshold = 2;
+    _scannerController?.dispose();
+    _scannerController = MobileScannerController(
+      autoStart: true,
+      facing: CameraFacing.back,
+      detectionSpeed: DetectionSpeed.normal,
+      formats: const [
+        BarcodeFormat.code128,
+        BarcodeFormat.code39,
+        BarcodeFormat.code93,
+        BarcodeFormat.ean13,
+        BarcodeFormat.ean8,
+        BarcodeFormat.qrCode,
+        BarcodeFormat.pdf417,
+      ],
+    );
+    setState(() => _isScanning = true);
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.black,
+      builder: (sheetCtx) {
+        final controller = _scannerController!;
+        return SafeArea(
+          child: LayoutBuilder(
+            builder: (context, constraints) {
+              final width = constraints.maxWidth;
+              final height = constraints.maxHeight;
+              final boxWidth = width * 0.78;
+              final boxHeight = height * 0.28;
+              final leftPx = (width - boxWidth) / 2;
+              final topPx = (height - boxHeight) / 2;
+              final scanWindow = Rect.fromLTWH(leftPx, topPx, boxWidth, boxHeight);
+              final overlayRect = scanWindow;
+
+              controller.start();
+
+              return Stack(
+                children: [
+                  MobileScanner(
+                    controller: controller,
+                    fit: BoxFit.cover,
+                    scanWindow: scanWindow,
+                    onDetect: (capture) {
+                      for (final barcode in capture.barcodes) {
+                        final rawValue = barcode.rawValue?.trim();
+                        if (rawValue == null || rawValue.isEmpty) continue;
+                        final normalized = rawValue.replaceAll(RegExp(r'[^0-9]'), '');
+                        if (!_isValidImeiLength(normalized)) {
+                          if (!invalidShown) {
+                            invalidShown = true;
+                            Get.snackbar(
+                              'IMEI Scan',
+                              'Detected code is not a valid IMEI (needs 14-16 digits).',
+                              snackPosition: SnackPosition.BOTTOM,
+                            );
+                          }
+                          continue;
+                        }
+                        if (!_passesImeiChecksumIfPresent(normalized)) {
+                          if (!invalidShown) {
+                            invalidShown = true;
+                            Get.snackbar(
+                              'IMEI Scan',
+                              'Scanned code failed IMEI checksum. Please rescan.',
+                              snackPosition: SnackPosition.BOTTOM,
+                            );
+                          }
+                          continue;
+                        }
+                        final requiredHits = normalized.length == 15 ? 1 : defaultHitThreshold;
+                        final hits = (detectionHits[normalized] ?? 0) + 1;
+                        detectionHits[normalized] = hits;
+                        if (hits >= requiredHits) {
+                          Navigator.of(sheetCtx).maybePop();
+                          _applyScannedImei(normalized);
+                          return;
+                        }
+                      }
+                    },
+                  ),
+                  Positioned.fill(
+                    child: IgnorePointer(
+                      child: CustomPaint(
+                        painter: _ScannerOverlayPainter(overlayRect),
+                      ),
+                    ),
+                  ),
+                  Positioned(
+                    top: 16,
+                    right: 16,
+                    child: IconButton(
+                      icon: const Icon(Icons.close, color: Colors.white),
+                      onPressed: () => Navigator.of(sheetCtx).maybePop(),
+                    ),
+                  ),
+                  Align(
+                    alignment: Alignment.bottomCenter,
+                    child: Padding(
+                      padding: EdgeInsets.only(bottom: height * 0.08, left: 24, right: 24),
+                      child: Text(
+                        'Align the IMEI barcode within the frame and hold steady for confirmation',
+                        textAlign: TextAlign.center,
+                        style: GoogleFonts.poppins(color: Colors.white70, fontSize: 13),
+                      ),
+                    ),
+                  ),
+                  Positioned(
+                    bottom: 24,
+                    left: 0,
+                    right: 0,
+                    child: Row(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        Container(
+                          decoration: BoxDecoration(
+                            color: Colors.black.withOpacity(0.45),
+                            borderRadius: BorderRadius.circular(32),
+                            border: Border.all(color: Colors.white24),
+                          ),
+                          child: ValueListenableBuilder<TorchState>(
+                            valueListenable: controller.torchState,
+                            builder: (_, state, __) {
+                              final isOn = state == TorchState.on;
+                              return IconButton(
+                                icon: Icon(isOn ? Icons.flash_on : Icons.flash_off, color: Colors.white),
+                                tooltip: isOn ? 'Turn off flash' : 'Turn on flash',
+                                onPressed: () => controller.toggleTorch(),
+                              );
+                            },
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+              );
+            },
+          ),
+        );
+      },
+    ).whenComplete(() {
+      if (mounted) {
+        _scannerController?.stop();
+        setState(() => _isScanning = false);
+      }
+    });
+  }
+
+  void _applyScannedImei(String value) {
+    final normalized = value.replaceAll(RegExp(r'[^0-9]'), '');
+    if (normalized.isEmpty) return;
+    setState(() {
+      imei.text = normalized;
+    });
+    _scannerController?.stop();
+  }
+
+  bool _isValidImeiLength(String digits) {
+    return digits.length >= 14 && digits.length <= 16;
+  }
+
+  bool _passesImeiChecksumIfPresent(String digits) {
+    if (digits.length != 15) {
+      return true;
+    }
+    int sum = 0;
+    for (int i = 0; i < 14; i++) {
+      int d = int.parse(digits[i]);
+      if (i.isOdd) {
+        int doubled = d * 2;
+        if (doubled > 9) doubled -= 9;
+        sum += doubled;
+      } else {
+        sum += d;
+      }
+    }
+    final expectedCheck = (10 - (sum % 10)) % 10;
+    final actualCheck = int.parse(digits[14]);
+    return expectedCheck == actualCheck;
+  }
+
+}
+
+class _ScannerOverlayPainter extends CustomPainter {
+  final Rect boxRect;
+  _ScannerOverlayPainter(this.boxRect);
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final paint = Paint()
+      ..color = Colors.black.withOpacity(0.5)
+      ..style = PaintingStyle.fill;
+    final fullRect = Offset.zero & size;
+    final path = Path()
+      ..addRect(fullRect)
+      ..addRRect(RRect.fromRectAndRadius(boxRect, const Radius.circular(16)))
+      ..fillType = PathFillType.evenOdd;
+    canvas.drawPath(path, paint);
+
+    final borderPaint = Paint()
+      ..color = Colors.white.withOpacity(0.85)
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 2;
+    canvas.drawRRect(RRect.fromRectAndRadius(boxRect, const Radius.circular(16)), borderPaint);
+  }
+
+  @override
+  bool shouldRepaint(covariant CustomPainter oldDelegate) => false;
 }

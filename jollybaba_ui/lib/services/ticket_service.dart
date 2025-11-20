@@ -264,11 +264,25 @@ class TicketService {
   // ---------------------------------------------------------------------------
   // ✅ Fetch tickets (supports both [] and {success,data} formats)
   // ---------------------------------------------------------------------------
-  static Future<List<dynamic>> fetchTickets({int page = 1, int perPage = 500}) async {
-    final uri = Uri.parse('${AppConfig.baseUrl}/api/tickets').replace(queryParameters: {
+  static Future<List<dynamic>> fetchTickets({
+    int page = 1,
+    int perPage = 500,
+    bool mineOnly = false,
+    bool pendingOnly = false,
+    String? status,
+  }) async {
+    final query = <String, String>{
       'page': page.toString(),
       'perPage': perPage.toString(),
-    });
+    };
+    if (mineOnly) query['mineOnly'] = 'true';
+    if (pendingOnly) query['pendingOnly'] = 'true';
+    final statusValue = status?.trim().toLowerCase();
+    if (statusValue != null && statusValue.isNotEmpty) {
+      query['status'] = statusValue;
+    }
+
+    final uri = Uri.parse('${AppConfig.baseUrl}/api/tickets').replace(queryParameters: query);
     final headers = await _buildHeaders();
 
     try {

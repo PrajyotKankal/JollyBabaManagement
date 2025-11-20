@@ -27,11 +27,12 @@ class _TechnicianDashboardScreenState extends State<TechnicianDashboardScreen>
   String _selectedStatus = "Pending";
   List<dynamic> _tickets = [];
   bool _isLoading = true;
+  bool _mineOnly = false;
 
   Map<String, dynamic>? _me; // current user (technician)
 
   // keep statuses consistent with admin dashboard
-  final List<String> statuses = ["Pending", "Repaired", "Delivered", "Cancelled"];
+  final List<String> statuses = ["All", "Pending", "Repaired", "Delivered", "Cancelled"];
 
   // nav sizes - keep same proportions as admin dashboard
   static const double _navBarHeight = 64.0;
@@ -109,44 +110,21 @@ class _TechnicianDashboardScreenState extends State<TechnicianDashboardScreen>
     if (!mounted) return;
     setState(() => _isLoading = true);
     try {
-      final all = await TicketService.fetchTickets();
-      // filter for technician: assigned-to OR created-by (frontend safety; backend already restricts)
-      final emailKey = (_me?['email'] ?? '').toString().toLowerCase();
-      final idKey = _me?['id']?.toString();
-      final nameKey = (_me?['name'] ?? '').toString().toLowerCase();
-
-      bool matchesAssignee(Map<String, dynamic> t) {
-        final aTech = (t['assigned_technician'] ?? '').toString().toLowerCase().trim();
-        final aTechEmail = (t['assigned_technician_email'] ?? '').toString().toLowerCase().trim();
-        final aTo = (t['assigned_to'] ?? '').toString().toLowerCase().trim();
-        if (emailKey.isNotEmpty && (aTechEmail.contains(emailKey) || aTech.contains(emailKey) || aTo.contains(emailKey))) return true;
-        if (nameKey.isNotEmpty && (aTech.contains(nameKey) || aTo.contains(nameKey))) return true;
-        if (idKey != null && idKey.isNotEmpty && (aTech.contains(idKey) || aTo.contains(idKey))) return true;
-        return false;
-      }
-
-      bool matchesCreator(Map<String, dynamic> t) {
-        final cEmail = (t['created_by_email'] ?? '').toString().toLowerCase().trim();
-        final cName = (t['created_by_name'] ?? '').toString().toLowerCase().trim();
-        final cId = (t['created_by_id'] ?? '').toString().trim();
-        if (emailKey.isNotEmpty && cEmail.contains(emailKey)) return true;
-        if (nameKey.isNotEmpty && cName.contains(nameKey)) return true;
-        if (idKey != null && idKey.isNotEmpty && cId == idKey) return true;
-        return false;
-      }
-
-      final filtered = all.where((raw) {
-        final Map<String, dynamic> t = Map<String, dynamic>.from(raw as Map);
-        return matchesAssignee(t) || matchesCreator(t);
-      }).toList();
+      final selected = _selectedStatus.trim().toLowerCase();
+      final fetchStatus = selected == 'all' ? null : selected;
+      final all = await TicketService.fetchTickets(
+        mineOnly: _mineOnly,
+        status: fetchStatus,
+        perPage: 500,
+      );
 
       if (mounted) {
         setState(() {
-          _tickets = filtered;
+          _tickets = all;
           _isLoading = false;
         });
       }
-      if (kDebugMode) debugPrint('Technician tickets loaded: ${_tickets.length}');
+      if (kDebugMode) debugPrint('Technician tickets loaded: ${_tickets.length} (mineOnly=$_mineOnly, status=${fetchStatus ?? 'any'})');
     } catch (e, st) {
       if (kDebugMode) debugPrint("❌ Error fetching tickets: $e\n$st");
 
@@ -383,7 +361,7 @@ class _TechnicianDashboardScreenState extends State<TechnicianDashboardScreen>
       final model = (t['device_model'] ?? '').toString().toLowerCase();
 
       final matchesQuery = name.contains(query) || mobile.contains(query) || model.contains(query);
-      final matchesStatus = statusNorm == selectedNorm;
+      final matchesStatus = selectedNorm == 'all' || statusNorm == selectedNorm;
       return matchesQuery && matchesStatus;
     }).toList();
 
@@ -474,7 +452,7 @@ class _TechnicianDashboardScreenState extends State<TechnicianDashboardScreen>
                     final status = statuses[i];
                     final isSelected = _selectedStatus == status;
                     return GestureDetector(
-                      onTap: () => setState(() => _selectedStatus = status),
+                      onTap: () => _onStatusSelected(status),
                       child: AnimatedContainer(
                         duration: const Duration(milliseconds: 220),
                         margin: const EdgeInsets.symmetric(horizontal: 6),
@@ -496,6 +474,23 @@ class _TechnicianDashboardScreenState extends State<TechnicianDashboardScreen>
                       ),
                     );
                   },
+                ),
+              ),
+              const SizedBox(height: 10),
+
+              Align(
+                alignment: Alignment.centerRight,
+                child: FilterChip(
+                  label: Text(_mineOnly ? 'Showing my tickets' : 'Showing all technicians'),
+                  selected: _mineOnly,
+                  onSelected: (value) {
+                    setState(() => _mineOnly = value);
+                    _loadTickets();
+                  },
+                  avatar: Icon(_mineOnly ? Icons.person_pin_circle : Icons.groups,
+                      size: 18, color: _mineOnly ? Colors.white : const Color(0xFF6D5DF6)),
+                  selectedColor: const Color(0xFF6D5DF6),
+                  checkmarkColor: Colors.white,
                 ),
               ),
               const SizedBox(height: 14),
