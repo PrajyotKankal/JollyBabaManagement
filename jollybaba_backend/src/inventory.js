@@ -16,6 +16,15 @@ function normalizeWhitespace(value) {
     .replace(/\s+/g, ' ');
 }
 
+async function ensureSalespersonColumn() {
+  if (!pool || typeof pool.query !== 'function') return;
+  try {
+    await pool.query(`ALTER TABLE inventory_items ADD COLUMN IF NOT EXISTS salesperson_name TEXT;`);
+  } catch (err) {
+    console.warn('⚠️ ensureSalespersonColumn failed (continuing):', err && err.stack ? err.stack : err);
+  }
+}
+
 function toNameKey(name) {
   return normalizeWhitespace(name).toLowerCase();
 }
@@ -445,6 +454,7 @@ router.post('/inventory', async (req, res) => {
 router.post('/inventory/:srNo/sell', async (req, res) => {
   const srNo = parseInt(req.params.srNo, 10);
   const c = req.body || {};
+  await ensureSalespersonColumn();
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
@@ -455,11 +465,12 @@ router.post('/inventory/:srNo/sell', async (req, res) => {
              customer_name = $3,
              mobile_number = $4,
              remarks = $5,
+             salesperson_name = $6,
              status = 'SOLD',
              updated_at = now()
-       WHERE sr_no = $6 AND status = 'AVAILABLE'
+       WHERE sr_no = $7 AND status = 'AVAILABLE'
        RETURNING sr_no, model, variant_gb_color, imei` ,
-      [c.sellDate, c.sellAmount || 0, c.customerName || null, c.mobileNumber || null, c.remarks || null, srNo]
+      [c.sellDate, c.sellAmount || 0, c.customerName || null, c.mobileNumber || null, c.remarks || null, c.salespersonName || null, srNo]
     );
 
     if (updateRes.rowCount === 0) {
@@ -552,6 +563,7 @@ router.post('/inventory/:srNo/make-available', async (req, res) => {
               customer_name = NULL,
               mobile_number = NULL,
               remarks = $2,
+              salesperson_name = NULL,
               status = 'AVAILABLE',
               khatabook_entry_id = NULL,
               updated_at = now()
