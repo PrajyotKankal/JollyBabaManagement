@@ -803,6 +803,15 @@ router.patch("/tickets/:id", authMiddleware, async (req, res) => {
     const assignedTechnicianEmail = req.body?.assigned_technician_email;
     const assignedTo = req.body?.assigned_to;
     const assignedToEmail = req.body?.assigned_to_email;
+    const customerName = req.body?.customer_name;
+    const mobileNumber = req.body?.mobile_number;
+    const deviceModel = req.body?.device_model;
+    const imei = req.body?.imei;
+    const issueDescription = req.body?.issue_description;
+    const estimatedCost = req.body?.estimated_cost;
+    const lockCode = req.body?.lock_code;
+    const receiveDate = req.body?.receive_date;
+    const repairDate = req.body?.repair_date;
 
     const result = await updateTicketWithWorklog({
       id,
@@ -815,6 +824,15 @@ router.patch("/tickets/:id", authMiddleware, async (req, res) => {
       assignedTechnicianEmail,
       assignedTo,
       assignedToEmail,
+      customerName,
+      mobileNumber,
+      deviceModel,
+      imei,
+      issueDescription,
+      estimatedCost,
+      lockCode,
+      receiveDate,
+      repairDate,
       actingIdentity,
       workAction,
       workNotes,
