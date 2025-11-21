@@ -373,6 +373,7 @@ async function ensureAssignmentColumns() {
   try {
     await pool.query(`ALTER TABLE tickets ADD COLUMN IF NOT EXISTS assigned_technician_email TEXT;`);
     await pool.query(`ALTER TABLE tickets ADD COLUMN IF NOT EXISTS assigned_to TEXT;`);
+    await pool.query(`ALTER TABLE tickets ADD COLUMN IF NOT EXISTS assigned_to_email TEXT;`);
   } catch (err) {
     console.warn("⚠️ ensureAssignmentColumns failed (continuing):", err && err.stack ? err.stack : err);
   }
