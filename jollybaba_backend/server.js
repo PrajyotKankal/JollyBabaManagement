@@ -15,6 +15,12 @@ const app = express();
 const port = process.env.PORT || 5000;
 const DEBUG_EXIT = process.env.DEBUG_EXIT === "true";
 
+// Clear deployment marker
+console.log('\n' + '🚀'.repeat(20));
+console.log('🚀  JollyBaba Backend - LATEST VERSION DEPLOYED  🚀');
+console.log('🚀  Timestamp:', new Date().toISOString(), '🚀');
+console.log('🚀'.repeat(20) + '\n');
+
 // Deployment information
 const deploymentInfo = {
   timestamp: new Date().toISOString(),
