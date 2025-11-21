@@ -121,6 +121,9 @@ function normalizeBooleanQuery(value) {
   return ["1", "true", "yes", "y", "on", "enabled", "mine", "me", "assigned", "own"].includes(normalized);
 }
 
+const EDIT_TICKET_VERSION = '2025-11-22-full-edit';
+console.log(`🛠️ tickets.js loaded (edit version: ${EDIT_TICKET_VERSION})`);
+
 async function updateTicketWithWorklog({
   id,
   status,
@@ -787,6 +790,7 @@ router.patch("/tickets/:id", authMiddleware, async (req, res) => {
 
   try {
     const { id } = req.params;
+    console.log(`🔁 PATCH /api/tickets/${id} (edit version ${EDIT_TICKET_VERSION})`);
     const { provided: notesProvided, notes } = parseNotesPayload(req.body?.notes);
     const actingIdentity = identityFromBody(req.body) || extractWorkerIdentity(req.user);
     const workAction = req.body?.work_action || null;
