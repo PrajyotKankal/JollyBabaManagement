@@ -128,6 +128,10 @@ async function updateTicketWithWorklog({
   notesProvided = false,
   deliveryPhoto1,
   deliveryPhoto2,
+  assignedTechnician,
+  assignedTechnicianEmail,
+  assignedTo,
+  assignedToEmail,
   actingIdentity,
   workAction,
   workNotes,
@@ -151,13 +155,17 @@ async function updateTicketWithWorklog({
         notes = COALESCE($2::jsonb, notes),
         delivery_photo_1 = COALESCE($3, delivery_photo_1),
         delivery_photo_2 = COALESCE($4, delivery_photo_2),
-        last_worked_by_email = COALESCE($5, last_worked_by_email),
-        last_worked_by_name = COALESCE($6, last_worked_by_name),
-        last_worked_by_id = COALESCE($7, last_worked_by_id),
-        last_worked_at = COALESCE($8, last_worked_at),
-        work_log = CASE WHEN $9::jsonb IS NULL THEN work_log ELSE COALESCE(work_log, '[]'::jsonb) || $9::jsonb END,
+        assigned_technician = COALESCE($5, assigned_technician),
+        assigned_technician_email = COALESCE($6, assigned_technician_email),
+        assigned_to = COALESCE($7, assigned_to),
+        assigned_to_email = COALESCE($8, assigned_to_email),
+        last_worked_by_email = COALESCE($9, last_worked_by_email),
+        last_worked_by_name = COALESCE($10, last_worked_by_name),
+        last_worked_by_id = COALESCE($11, last_worked_by_id),
+        last_worked_at = COALESCE($12, last_worked_at),
+        work_log = CASE WHEN $13::jsonb IS NULL THEN work_log ELSE COALESCE(work_log, '[]'::jsonb) || $13::jsonb END,
         updated_at = now()
-    WHERE id = $10
+    WHERE id = $14
     RETURNING *;
   `;
 
@@ -166,6 +174,10 @@ async function updateTicketWithWorklog({
     notesJson,
     deliveryPhoto1 || null,
     deliveryPhoto2 || null,
+    assignedTechnician || null,
+    assignedTechnicianEmail || null,
+    assignedTo || null,
+    assignedToEmail || null,
     worker?.email || null,
     worker?.name || null,
     typeof worker?.id === "number" ? worker.id : null,
@@ -755,6 +767,10 @@ router.patch("/tickets/:id", authMiddleware, async (req, res) => {
     const status = req.body?.status;
     const deliveryPhoto1 = req.body?.delivery_photo_1;
     const deliveryPhoto2 = req.body?.delivery_photo_2;
+    const assignedTechnician = req.body?.assigned_technician;
+    const assignedTechnicianEmail = req.body?.assigned_technician_email;
+    const assignedTo = req.body?.assigned_to;
+    const assignedToEmail = req.body?.assigned_to_email;
 
     const result = await updateTicketWithWorklog({
       id,
@@ -763,6 +779,10 @@ router.patch("/tickets/:id", authMiddleware, async (req, res) => {
       notesProvided,
       deliveryPhoto1,
       deliveryPhoto2,
+      assignedTechnician,
+      assignedTechnicianEmail,
+      assignedTo,
+      assignedToEmail,
       actingIdentity,
       workAction,
       workNotes,
