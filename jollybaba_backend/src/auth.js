@@ -153,15 +153,24 @@ router.post(
 
     // Decide role based on email: specific Google account is admin, others are technicians
     const isAdminEmail = email.toLowerCase() === "jollybaba30@gmail.com";
-    const desiredRole = isAdminEmail ? "admin" : "technician";
+    if (!isAdminEmail) {
+      // Only the configured admin Google account is allowed to log in via Google.
+      return res.status(403).json({
+        error: "Google login is restricted to admin",
+        message:
+          "Google sign-in is only for the admin account. Technicians should log in using their ID and password.",
+      });
+    }
+
+    const desiredRole = "admin";
 
     let user;
     const existing = await pool.query("SELECT * FROM technicians WHERE email = $1", [email]);
     if (existing.rowCount > 0) {
       user = existing.rows[0];
 
-      // If this is the admin email but role is not admin yet, upgrade it.
-      if (desiredRole === "admin" && user.role !== "admin") {
+      // Ensure admin email always has admin role.
+      if (user.role !== desiredRole) {
         const updated = await pool.query(
           "UPDATE technicians SET role = $1 WHERE id = $2 RETURNING id, name, email, role",
           [desiredRole, user.id]
