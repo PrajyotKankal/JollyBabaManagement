@@ -151,10 +151,23 @@ router.post(
 
     const displayName = name && name.trim().length > 0 ? name.trim() : email.split("@")[0];
 
+    // Decide role based on email: specific Google account is admin, others are technicians
+    const isAdminEmail = email.toLowerCase() === "jollybaba30@gmail.com";
+    const desiredRole = isAdminEmail ? "admin" : "technician";
+
     let user;
     const existing = await pool.query("SELECT * FROM technicians WHERE email = $1", [email]);
     if (existing.rowCount > 0) {
       user = existing.rows[0];
+
+      // If this is the admin email but role is not admin yet, upgrade it.
+      if (desiredRole === "admin" && user.role !== "admin") {
+        const updated = await pool.query(
+          "UPDATE technicians SET role = $1 WHERE id = $2 RETURNING id, name, email, role",
+          [desiredRole, user.id]
+        );
+        user = updated.rows[0];
+      }
     } else {
       const pseudoPassword = payload.sub || email;
       const password_hash = await bcrypt.hash(pseudoPassword, SALT_ROUNDS);
@@ -162,7 +175,7 @@ router.post(
         `INSERT INTO technicians (name, email, password_hash, role)
          VALUES ($1,$2,$3,$4)
          RETURNING id, name, email, role`,
-        [displayName, email, password_hash, "technician"]
+        [displayName, email, password_hash, desiredRole]
       );
       user = created.rows[0];
     }
