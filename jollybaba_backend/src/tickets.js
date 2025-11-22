@@ -451,7 +451,27 @@ router.get("/tickets", authMiddleware, async (req, res) => {
     const rawStatusFilter = (req.query.status || "").toString().trim().toLowerCase();
     const statusFilter = pendingOnly ? "pending" : rawStatusFilter;
 
-    // Admins see everything (paginated)
+    // If technicianEmail is provided, always filter by that assignment (for admin reports)
+    const technicianEmail = (req.query.technicianEmail || "").toString().toLowerCase().trim();
+    if (technicianEmail && technicianEmail.length > 0) {
+      const likeNeedle = `%${technicianEmail.split('@')[0]}%`;
+      const q = `
+        SELECT * FROM tickets
+        WHERE lower(coalesce(assigned_technician_email, '')) = $1
+           OR lower(coalesce(assigned_technician, '')) LIKE $2
+        ORDER BY id DESC
+        LIMIT $3 OFFSET $4
+      `;
+      const result = await runQueryWithAddTimestampsOnMissingColumn(q, [
+        technicianEmail,
+        likeNeedle,
+        perPage,
+        offset,
+      ]);
+      return res.json({ success: true, data: result.rows, page, perPage });
+    }
+
+    // Admins see everything (paginated) when no technicianEmail filter
     if (role === "admin" || role === "administrator") {
       const q = `SELECT * FROM tickets ORDER BY id DESC LIMIT $1 OFFSET $2`;
       const result = await runQueryWithAddTimestampsOnMissingColumn(q, [perPage, offset]);
