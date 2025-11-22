@@ -451,6 +451,90 @@ router.post('/inventory', async (req, res) => {
   }
 });
 
+// Multi-sell endpoint: mark many AVAILABLE items as SOLD in a single sale
+router.post('/inventory/sell-multiple', async (req, res) => {
+  const c = req.body || {};
+  const srNos = Array.isArray(c.srNos) ? c.srNos.map((n) => parseInt(n, 10)).filter((n) => Number.isInteger(n)) : [];
+
+  if (!srNos.length) {
+    return res.status(400).json({ error: 'NO_SR_NOS_PROVIDED' });
+  }
+
+  await ensureSalespersonColumn();
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+
+    const totalAmount = toNumericAmount(c.sellAmount);
+    const perItemAmount = srNos.length > 0 ? totalAmount / srNos.length : 0;
+
+    const updateRes = await client.query(
+      `UPDATE inventory_items
+         SET sell_date = $1,
+             sell_amount = $2,
+             customer_name = $3,
+             mobile_number = $4,
+             remarks = $5,
+             salesperson_name = $6,
+             status = 'SOLD',
+             updated_at = now()
+       WHERE sr_no = ANY($7::int[]) AND status = 'AVAILABLE'
+       RETURNING sr_no, model, variant_gb_color, imei` ,
+      [c.sellDate, perItemAmount, c.customerName || null, c.mobileNumber || null, c.remarks || null, c.salespersonName || null, srNos]
+    );
+
+    if (updateRes.rowCount === 0) {
+      await client.query('ROLLBACK');
+      return res.status(400).json({ error: 'NOT_AVAILABLE_OR_NOT_FOUND' });
+    }
+
+    const firstItem = updateRes.rows[0];
+    const firstSrNo = firstItem.sr_no;
+    let khatabookEntryId = null;
+
+    try {
+      // Use original payload so khatabook entry amount reflects total sale amount
+      khatabookEntryId = await createKhatabookEntryForSale(client, {
+        srNo: firstSrNo,
+        item: firstItem,
+        payload: c,
+      });
+      if (khatabookEntryId) {
+        await client.query(
+          'UPDATE inventory_items SET khatabook_entry_id = $1 WHERE sr_no = ANY($2::int[])',
+          [khatabookEntryId, srNos]
+        );
+      }
+    } catch (entryErr) {
+      console.warn('POST /inventory/sell-multiple khatabook create failed', entryErr);
+    }
+
+    try {
+      await upsertCustomerRecord(
+        {
+          name: c.customerName,
+          phone: c.mobileNumber,
+          address: c.customerAddress,
+          lastPurchaseAt: c.sellDate,
+        },
+        client
+      );
+    } catch (customerErr) {
+      console.warn('POST /inventory/sell-multiple customer upsert failed', customerErr);
+    }
+
+    await client.query('COMMIT');
+
+    return res.json({ success: true, updated: updateRes.rowCount, khatabookEntryId: khatabookEntryId || null });
+  } catch (e) {
+    await client.query('ROLLBACK');
+    console.error('POST /inventory/sell-multiple error', e);
+    return res.status(500).json({ error: 'MULTI_SELL_FAILED' });
+  } finally {
+    client.release();
+  }
+});
+
 router.post('/inventory/:srNo/sell', async (req, res) => {
   const srNo = parseInt(req.params.srNo, 10);
   const c = req.body || {};
