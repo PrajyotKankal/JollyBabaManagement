@@ -2,12 +2,18 @@
 const express = require("express");
 const bcrypt = require("bcrypt");
 const jwt = require("jsonwebtoken");
+const { OAuth2Client } = require("google-auth-library");
 const pool = require("./db");
 
 const router = express.Router();
 
 const JWT_SECRET = process.env.JWT_SECRET || "change_this_secret_in_prod";
 const SALT_ROUNDS = parseInt(process.env.SALT_ROUNDS || "12", 10);
+const GOOGLE_WEB_CLIENT_ID =
+  process.env.GOOGLE_WEB_CLIENT_ID ||
+  "1082161785386-s93uqmt80sdkc7s0nijtiuu4or0fqbuj.apps.googleusercontent.com";
+
+const googleClient = new OAuth2Client(GOOGLE_WEB_CLIENT_ID);
 
 // ---------------- helpers ----------------
 function signToken(payload) {
@@ -112,6 +118,59 @@ router.post(
     const safeUser = { id: user.id, name: user.name, email: user.email, role: user.role };
 
     console.log("✅ login success for:", email, "id:", user.id, "role:", user.role);
+    return res.json({ token, user: safeUser });
+  })
+);
+
+// POST /api/auth/google
+router.post(
+  "/auth/google",
+  asyncHandler(async (req, res) => {
+    const { idToken } = req.body || {};
+    if (!idToken) {
+      return res.status(400).json({ error: "idToken is required" });
+    }
+
+    let payload;
+    try {
+      const ticket = await googleClient.verifyIdToken({
+        idToken,
+        audience: GOOGLE_WEB_CLIENT_ID,
+      });
+      payload = ticket.getPayload();
+    } catch (err) {
+      console.error("❌ Google token verification failed:", err && err.stack ? err.stack : err);
+      return res.status(401).json({ error: "Invalid Google token" });
+    }
+
+    const email = (payload && payload.email) || null;
+    const name = (payload && payload.name) || null;
+    if (!email) {
+      return res.status(400).json({ error: "Google account has no email" });
+    }
+
+    const displayName = name && name.trim().length > 0 ? name.trim() : email.split("@")[0];
+
+    let user;
+    const existing = await pool.query("SELECT * FROM technicians WHERE email = $1", [email]);
+    if (existing.rowCount > 0) {
+      user = existing.rows[0];
+    } else {
+      const pseudoPassword = payload.sub || email;
+      const password_hash = await bcrypt.hash(pseudoPassword, SALT_ROUNDS);
+      const created = await pool.query(
+        `INSERT INTO technicians (name, email, password_hash, role)
+         VALUES ($1,$2,$3,$4)
+         RETURNING id, name, email, role`,
+        [displayName, email, password_hash, "technician"]
+      );
+      user = created.rows[0];
+    }
+
+    const token = signToken({ id: user.id, email: user.email, role: user.role });
+    const safeUser = { id: user.id, name: user.name, email: user.email, role: user.role };
+
+    console.log("✅ Google login success for:", email, "id:", user.id, "role:", user.role);
     return res.json({ token, user: safeUser });
   })
 );
