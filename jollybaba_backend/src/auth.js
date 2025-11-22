@@ -92,6 +92,15 @@ router.post(
       return res.status(400).json({ error: "Email and password required" });
     }
 
+    // Disallow legacy seeded admin credentials; admin must use Google login.
+    if (email.toLowerCase() === "admin@jollybaba.com") {
+      return res.status(403).json({
+        error: "Admin must use Google login",
+        message:
+          "Admin login via email/password is disabled. Please use the Google admin login instead.",
+      });
+    }
+
     // use a single query; rowCount check handles not found
     const result = await pool.query("SELECT * FROM technicians WHERE email = $1", [email]);
     if (result.rowCount === 0) {
