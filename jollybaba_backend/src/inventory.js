@@ -451,6 +451,77 @@ router.post('/inventory', async (req, res) => {
   }
 });
 
+// Multi-add endpoint: create many AVAILABLE items in a single transaction
+router.post('/inventory/add-multiple', async (req, res) => {
+  const c = req.body || {};
+  const items = Array.isArray(c.items) ? c.items : [];
+
+  if (!items.length) {
+    return res.status(400).json({ error: 'NO_ITEMS_PROVIDED' });
+  }
+
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+
+    const srNos = [];
+    for (const row of items) {
+      const r = row || {};
+      const date = r.date || c.date || new Date().toISOString().slice(0, 10);
+      const brand = r.brand || null;
+      const model = r.model;
+      const imei = r.imei;
+      const variantGbColor = r.variantGbColor || null;
+      const vendorPurchase = r.vendorPurchase || c.vendorPurchase || null;
+      const vendorPhone = r.vendorPhone || c.vendorPhone || null;
+      const purchaseAmount = r.purchaseAmount || c.purchaseAmount || 0;
+      const remarks = r.remarks || c.remarks || null;
+
+      if (!model || !imei) {
+        await client.query('ROLLBACK');
+        return res.status(400).json({ error: 'INVALID_ITEM', item: r });
+      }
+
+      try {
+        const { rows } = await client.query(
+          `INSERT INTO inventory_items (date, brand, model, imei, variant_gb_color, vendor_purchase, vendor_phone, purchase_amount, remarks, status, created_at, updated_at)
+           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,'AVAILABLE', now(), now())
+           RETURNING sr_no`,
+          [
+            date,
+            brand,
+            model,
+            imei,
+            variantGbColor,
+            vendorPurchase,
+            vendorPhone,
+            purchaseAmount,
+            remarks,
+          ]
+        );
+        if (rows[0] && rows[0].sr_no !== undefined) {
+          srNos.push(rows[0].sr_no);
+        }
+      } catch (e) {
+        if (String(e.message || '').toLowerCase().includes('unique')) {
+          await client.query('ROLLBACK');
+          return res.status(409).json({ error: 'DUP_IMEI_IN_BATCH' });
+        }
+        throw e;
+      }
+    }
+
+    await client.query('COMMIT');
+    return res.json({ success: true, created: srNos.length, sr_nos: srNos });
+  } catch (e) {
+    await client.query('ROLLBACK');
+    console.error('POST /inventory/add-multiple error', e);
+    return res.status(500).json({ error: 'CREATE_MULTI_FAILED' });
+  } finally {
+    client.release();
+  }
+});
+
 // Multi-sell endpoint: mark many AVAILABLE items as SOLD in a single sale
 router.post('/inventory/sell-multiple', async (req, res) => {
   const c = req.body || {};
