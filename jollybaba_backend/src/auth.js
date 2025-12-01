@@ -17,7 +17,7 @@ const googleClient = new OAuth2Client(GOOGLE_WEB_CLIENT_ID);
 
 // ---------------- helpers ----------------
 function signToken(payload) {
-  return jwt.sign(payload, JWT_SECRET, { expiresIn: "4h" });
+  return jwt.sign(payload, JWT_SECRET, { expiresIn: "365d" });
 }
 
 // Simple async handler to forward errors to Express error middleware
@@ -86,7 +86,8 @@ router.post(
       console.error("Logger error (nonfatal):", logErr && logErr.stack ? logErr.stack : logErr);
     }
 
-    const { email, password } = req.body || {};
+    let { email, password } = req.body || {};
+    if (email) email = email.toLowerCase().trim();
     if (!email || !password) {
       console.log("🔒 login failed - missing email/password");
       return res.status(400).json({ error: "Email and password required" });
@@ -105,6 +106,7 @@ router.post(
     const result = await pool.query("SELECT * FROM technicians WHERE email = $1", [email]);
     if (result.rowCount === 0) {
       console.log("🔒 login failed - user not found for:", email);
+      console.log("   -> Query returned 0 rows for email:", email);
       // respond 401 but avoid leaking whether email exists
       return res.status(401).json({ error: "Invalid credentials" });
     }
@@ -120,6 +122,8 @@ router.post(
     const match = await bcrypt.compare(password, user.password_hash);
     if (!match) {
       console.log("🔒 login failed - password mismatch for:", email);
+      console.log("   -> Stored hash starts with:", user.password_hash.substring(0, 10));
+      // console.log("   -> Provided password:", password); // UNCOMMENT ONLY FOR DEBUGGING
       return res.status(401).json({ error: "Invalid credentials" });
     }
 
@@ -152,7 +156,7 @@ router.post(
       return res.status(401).json({ error: "Invalid Google token" });
     }
 
-    const email = (payload && payload.email) || null;
+    const email = (payload && payload.email) ? payload.email.toLowerCase() : null;
     const name = (payload && payload.name) || null;
     if (!email) {
       return res.status(400).json({ error: "Google account has no email" });
@@ -233,7 +237,8 @@ router.post(
   authMiddleware,
   requireRole("admin"),
   asyncHandler(async (req, res) => {
-    const { name, email, password, phone, role } = req.body || {};
+    let { name, email, password, phone, role } = req.body || {};
+    if (email) email = email.toLowerCase().trim();
     if (!name || !email || !password) return res.status(400).json({ error: "Name, email and password are required" });
 
     const existing = await pool.query("SELECT id FROM technicians WHERE email = $1", [email]);
