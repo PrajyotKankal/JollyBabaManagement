@@ -200,6 +200,167 @@ router.get('/customers/search', async (req, res) => {
   }
 });
 
+// GET /customers/all - Aggregate customers from all tables (tickets, inventory, khatabook)
+router.get('/customers/all', async (req, res) => {
+  try {
+    // Get all customers from tickets
+    const ticketsRes = await pool.query(`
+      SELECT COALESCE(NULLIF(TRIM(customer_name), ''), 'Unknown') as name,
+             COALESCE(NULLIF(TRIM(mobile_number), ''), '') as phone,
+             COUNT(*) as ticket_count,
+             MAX(created_at) as last_activity
+      FROM tickets
+      WHERE customer_name IS NOT NULL AND TRIM(customer_name) != ''
+      GROUP BY TRIM(customer_name), TRIM(mobile_number)
+    `);
+
+    // Get all customers from inventory (SOLD items)
+    const inventoryRes = await pool.query(`
+      SELECT COALESCE(NULLIF(TRIM(customer_name), ''), 'Customer') as name,
+             COALESCE(NULLIF(TRIM(mobile_number), ''), '') as phone,
+             COUNT(*) as purchase_count,
+             SUM(COALESCE(sell_amount, 0)) as total_spent,
+             MAX(COALESCE(sell_date, updated_at)) as last_activity
+      FROM inventory_items
+      WHERE status = 'SOLD' AND customer_name IS NOT NULL AND TRIM(customer_name) != ''
+      GROUP BY TRIM(customer_name), TRIM(mobile_number)
+    `);
+
+    // Get all customers from khatabook
+    const khataRes = await pool.query(`
+      SELECT COALESCE(NULLIF(TRIM(name), ''), 'Unknown') as name,
+             COALESCE(NULLIF(TRIM(mobile), ''), '') as phone,
+             COUNT(*) as khata_count,
+             SUM(COALESCE(amount, 0)) as total_amount,
+             SUM(COALESCE(paid, 0)) as total_paid,
+             MAX(COALESCE(entry_date, created_at)) as last_activity
+      FROM khatabook_entries
+      WHERE name IS NOT NULL AND TRIM(name) != ''
+      GROUP BY TRIM(name), TRIM(mobile)
+    `);
+
+    // Merge all by phone number (primary key) or by name if no phone
+    const customerMap = new Map();
+
+    const normalizePhone = (p) => (p || '').replace(/\D+/g, '');
+    const normalizeName = (n) => (n || '').toLowerCase().trim().replace(/\s+/g, ' ');
+
+    const getKey = (name, phone) => {
+      const digits = normalizePhone(phone);
+      if (digits.length >= 10) return `phone:${digits}`;
+      return `name:${normalizeName(name)}`;
+    };
+
+    // Process tickets
+    for (const row of ticketsRes.rows) {
+      const key = getKey(row.name, row.phone);
+      if (!customerMap.has(key)) {
+        customerMap.set(key, {
+          name: row.name,
+          phone: row.phone || '',
+          email: '',
+          address: '',
+          ticketCount: 0,
+          purchaseCount: 0,
+          khataCount: 0,
+          totalSpent: 0,
+          khataAmount: 0,
+          khataPaid: 0,
+          lastActivity: null,
+          source: []
+        });
+      }
+      const c = customerMap.get(key);
+      c.ticketCount += parseInt(row.ticket_count, 10) || 0;
+      if (!c.source.includes('Tickets')) c.source.push('Tickets');
+      if (row.last_activity && (!c.lastActivity || new Date(row.last_activity) > new Date(c.lastActivity))) {
+        c.lastActivity = row.last_activity;
+      }
+    }
+
+    // Process inventory
+    for (const row of inventoryRes.rows) {
+      const key = getKey(row.name, row.phone);
+      if (!customerMap.has(key)) {
+        customerMap.set(key, {
+          name: row.name,
+          phone: row.phone || '',
+          email: '',
+          address: '',
+          ticketCount: 0,
+          purchaseCount: 0,
+          khataCount: 0,
+          totalSpent: 0,
+          khataAmount: 0,
+          khataPaid: 0,
+          lastActivity: null,
+          source: []
+        });
+      }
+      const c = customerMap.get(key);
+      c.purchaseCount += parseInt(row.purchase_count, 10) || 0;
+      c.totalSpent += parseFloat(row.total_spent) || 0;
+      if (!c.source.includes('Sales')) c.source.push('Sales');
+      if (row.last_activity && (!c.lastActivity || new Date(row.last_activity) > new Date(c.lastActivity))) {
+        c.lastActivity = row.last_activity;
+      }
+    }
+
+    // Process khatabook
+    for (const row of khataRes.rows) {
+      const key = getKey(row.name, row.phone);
+      if (!customerMap.has(key)) {
+        customerMap.set(key, {
+          name: row.name,
+          phone: row.phone || '',
+          email: '',
+          address: '',
+          ticketCount: 0,
+          purchaseCount: 0,
+          khataCount: 0,
+          totalSpent: 0,
+          khataAmount: 0,
+          khataPaid: 0,
+          lastActivity: null,
+          source: []
+        });
+      }
+      const c = customerMap.get(key);
+      c.khataCount += parseInt(row.khata_count, 10) || 0;
+      c.khataAmount += parseFloat(row.total_amount) || 0;
+      c.khataPaid += parseFloat(row.total_paid) || 0;
+      if (!c.source.includes('Khatabook')) c.source.push('Khatabook');
+      if (row.last_activity && (!c.lastActivity || new Date(row.last_activity) > new Date(c.lastActivity))) {
+        c.lastActivity = row.last_activity;
+      }
+    }
+
+    // Get additional info from customers table
+    const customersRes = await pool.query(`SELECT name, phone, email, address FROM customers`);
+    for (const row of customersRes.rows) {
+      const key = getKey(row.name, row.phone);
+      if (customerMap.has(key)) {
+        const c = customerMap.get(key);
+        if (row.email) c.email = row.email;
+        if (row.address) c.address = row.address;
+      }
+    }
+
+    // Convert to array and sort by last activity
+    const customers = Array.from(customerMap.values())
+      .sort((a, b) => {
+        if (!a.lastActivity) return 1;
+        if (!b.lastActivity) return -1;
+        return new Date(b.lastActivity) - new Date(a.lastActivity);
+      });
+
+    return res.json({ customers, count: customers.length });
+  } catch (err) {
+    console.error('GET /customers/all error', err);
+    return res.status(500).json({ error: 'CUSTOMERS_FETCH_FAILED' });
+  }
+});
+
 router.get('/vendors/search', async (req, res) => {
   const raw = (req.query.q || '').toString();
   const query = raw.trim();
