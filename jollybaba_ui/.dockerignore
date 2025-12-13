@@ -1,0 +1,21 @@
+# Build outputs
+build/
+.dart_tool/
+.packages
+
+# IDE
+.idea/
+*.iml
+.vscode/
+
+# Platform specific (not needed for web build)
+android/.gradle/
+ios/.symlinks/
+ios/Pods/
+ios/Flutter/Flutter.framework/
+macos/Flutter/Flutter.framework/
+
+# Misc
+*.log
+*.pyc
+.DS_Store
