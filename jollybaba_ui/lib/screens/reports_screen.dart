@@ -57,6 +57,15 @@ class _ReportsScreenState extends State<ReportsScreen> {
   String _khataStatusFilter = 'ALL';
   final TextEditingController _khataSearchController = TextEditingController();
   
+  // Khatabook edit mode state
+  bool _khataEditMode = false;
+  int? _editingKhataRow;
+  int? _editingKhataCol;
+  final TextEditingController _khataEditController = TextEditingController();
+  final FocusNode _khataEditFocusNode = FocusNode();
+  final Map<String, Map<String, dynamic>> _editedKhataRows = {}; // keyed by unique id
+  bool _hasUnsavedKhataChanges = false;
+  
   // Customers data
   List<Map<String, dynamic>> _customers = [];
   List<Map<String, dynamic>> _filteredCustomers = [];
@@ -169,6 +178,8 @@ class _ReportsScreenState extends State<ReportsScreen> {
     _searchController.dispose();
     _khataSearchController.dispose();
     _customerSearchController.dispose();
+    _khataEditController.dispose();
+    _khataEditFocusNode.dispose();
     super.dispose();
   }
 
@@ -345,6 +356,213 @@ class _ReportsScreenState extends State<ReportsScreen> {
     if (matches.isEmpty) return 0.0;
     final last = matches.last.group(1) ?? '0';
     return double.tryParse(last.replaceAll(',', '')) ?? 0.0;
+  }
+  
+  // Khatabook editing functions
+  void _toggleKhataEditMode() {
+    if (_khataEditMode && _hasUnsavedKhataChanges) {
+      // Ask to save before exiting
+      showDialog(
+        context: context,
+        builder: (ctx) => AlertDialog(
+          title: const Text('Unsaved Changes'),
+          content: const Text('You have unsaved changes. Do you want to save them?'),
+          actions: [
+            TextButton(
+              onPressed: () {
+                Navigator.pop(ctx);
+                setState(() {
+                  _khataEditMode = false;
+                  _editedKhataRows.clear();
+                  _hasUnsavedKhataChanges = false;
+                  _editingKhataRow = null;
+                  _editingKhataCol = null;
+                });
+              },
+              child: const Text('Discard'),
+            ),
+            ElevatedButton(
+              onPressed: () {
+                Navigator.pop(ctx);
+                _saveKhataChanges();
+              },
+              child: const Text('Save'),
+            ),
+          ],
+        ),
+      );
+    } else {
+      setState(() {
+        _khataEditMode = !_khataEditMode;
+        if (!_khataEditMode) {
+          _editingKhataRow = null;
+          _editingKhataCol = null;
+        }
+      });
+    }
+  }
+  
+  String _getKhataRowId(Map<String, dynamic> row) {
+    if (row['is_manual'] == true) {
+      return 'manual_${row['id'] ?? row['manual_id'] ?? ''}';
+    }
+    return 'inv_${row['sr_no'] ?? ''}';
+  }
+  
+  bool _isKhataColEditable(String key, Map<String, dynamic> row) {
+    // Paid is always editable
+    if (key == 'paid') return true;
+    // For manual entries, more fields are editable
+    if (row['is_manual'] == true) {
+      return ['name', 'mobile', 'amount', 'description'].contains(key);
+    }
+    return false;
+  }
+  
+  void _onKhataCellTap(int rowIdx, int colIdx) {
+    if (!_khataEditMode) return;
+    
+    final col = _khataColumns[colIdx];
+    final key = col['key'] as String;
+    final row = _filteredKhatabook[rowIdx];
+    
+    // Check if column is editable for this row type
+    if (!_isKhataColEditable(key, row)) return;
+    
+    setState(() {
+      _editingKhataRow = rowIdx;
+      _editingKhataCol = colIdx;
+    });
+    
+    // Populate editor with current value
+    final currentValue = row[key]?.toString() ?? '';
+    _khataEditController.text = currentValue;
+    
+    Future.delayed(const Duration(milliseconds: 50), () {
+      _khataEditFocusNode.requestFocus();
+      _khataEditController.selection = TextSelection(
+        baseOffset: 0,
+        extentOffset: _khataEditController.text.length,
+      );
+    });
+  }
+  
+  void _onKhataCellEditComplete(int rowIdx, int colIdx) {
+    final col = _khataColumns[colIdx];
+    final key = col['key'] as String;
+    final row = _filteredKhatabook[rowIdx];
+    final rowId = _getKhataRowId(row);
+    
+    // Parse value based on column type
+    dynamic val;
+    if (['amount', 'paid'].contains(key)) {
+      val = double.tryParse(_khataEditController.text.replaceAll('₹', '').replaceAll(',', '')) ?? 0.0;
+    } else {
+      val = _khataEditController.text.trim();
+    }
+    
+    // Update local data
+    _filteredKhatabook[rowIdx][key] = val;
+    
+    // Track edit
+    _editedKhataRows.putIfAbsent(rowId, () => Map<String, dynamic>.from(row));
+    _editedKhataRows[rowId]![key] = val;
+    
+    // Recalculate remaining if paid changed
+    if (key == 'paid') {
+      final amount = (row['amount'] as num?)?.toDouble() ?? 0;
+      final newPaid = val is num ? val.toDouble() : 0.0;
+      _filteredKhatabook[rowIdx]['remaining'] = (amount - newPaid).clamp(0.0, double.infinity);
+    }
+    
+    setState(() {
+      _hasUnsavedKhataChanges = true;
+      _editingKhataRow = null;
+      _editingKhataCol = null;
+    });
+  }
+  
+  Future<void> _saveKhataChanges() async {
+    if (_editedKhataRows.isEmpty) return;
+    
+    Get.showSnackbar(const GetSnackBar(
+      message: 'Saving changes...',
+      showProgressIndicator: true,
+      isDismissible: false,
+      duration: Duration(minutes: 1),
+    ));
+    
+    int successCount = 0;
+    int errorCount = 0;
+    
+    for (final entry in _editedKhataRows.entries) {
+      final rowId = entry.key;
+      final changes = entry.value;
+      
+      try {
+        if (rowId.startsWith('manual_')) {
+          // Update manual khatabook entry
+          final idStr = rowId.replaceFirst('manual_', '');
+          final id = int.tryParse(idStr);
+          if (id != null) {
+            await KhatabookService.updateEntry(id, {
+              if (changes.containsKey('name')) 'name': changes['name'],
+              if (changes.containsKey('mobile')) 'mobile': changes['mobile'],
+              if (changes.containsKey('amount')) 'amount': changes['amount'],
+              if (changes.containsKey('paid')) 'paid': changes['paid'],
+              if (changes.containsKey('description')) 'description': changes['description'],
+            });
+            successCount++;
+          }
+        } else {
+          // Update inventory item remarks for paid amount
+          final srNo = int.tryParse(rowId.replaceFirst('inv_', ''));
+          if (srNo != null && changes.containsKey('paid')) {
+            final paid = changes['paid'] as double;
+            // Get current remarks and append/update paid
+            final currentRemarks = changes['remarks']?.toString() ?? '';
+            final newRemarks = _updateRemarksWithPaid(currentRemarks, paid);
+            await InventoryService.updateRemarks(srNo, newRemarks);
+            successCount++;
+          }
+        }
+      } catch (e) {
+        if (kDebugMode) debugPrint('Error saving khata row $rowId: $e');
+        errorCount++;
+      }
+    }
+    
+    Get.closeAllSnackbars();
+    
+    if (errorCount == 0) {
+      Get.snackbar('Saved', '$successCount entries updated successfully',
+        backgroundColor: Colors.green.shade100,
+        snackPosition: SnackPosition.BOTTOM,
+      );
+      setState(() {
+        _editedKhataRows.clear();
+        _hasUnsavedKhataChanges = false;
+        _khataEditMode = false;
+      });
+      // Reload to get fresh data
+      _loadKhatabook();
+    } else {
+      Get.snackbar('Partial Save', '$successCount saved, $errorCount failed',
+        backgroundColor: Colors.orange.shade100,
+        snackPosition: SnackPosition.BOTTOM,
+      );
+    }
+  }
+  
+  String _updateRemarksWithPaid(String currentRemarks, double paid) {
+    final paidStr = 'Paid: ₹${paid.toStringAsFixed(0)}';
+    // Check if there's already a Paid entry and update it
+    final regex = RegExp(r'Paid\s*:\s*₹?\s*[0-9,]+', caseSensitive: false);
+    if (regex.hasMatch(currentRemarks)) {
+      return currentRemarks.replaceAll(regex, paidStr);
+    }
+    // Otherwise append
+    return currentRemarks.isEmpty ? paidStr : '$currentRemarks | $paidStr';
   }
   
   void _applyKhataFilters() {
@@ -941,6 +1159,9 @@ class _ReportsScreenState extends State<ReportsScreen> {
     
     return Column(
       children: [
+        // Edit mode toolbar
+        _buildKhataEditToolbar(),
+        
         // Date filter row
         _buildDateFilterRow(
           preset: _khataDatePreset,
@@ -957,23 +1178,249 @@ class _ReportsScreenState extends State<ReportsScreen> {
         // Filter bar
         _buildKhataFilters(),
         
-        // Data table
+        // Data table - editable version
         Expanded(
-          child: _buildDataTable(
-            title: 'Khatabook Report',
-            subtitle: '${_filteredKhatabook.length} of ${_khatabook.length} entries',
-            columns: _khataColumns,
-            data: _filteredKhatabook,
-            getCellValue: _getKhataCellValue,
-            onRefresh: _loadKhatabook,
-            onDownload: _downloadKhatabookExcel,
-            downloadKey: _khataDownloadKey,
-            onRowTap: (row) => ReportDetailDrawer.showAsBottomSheet(
-              context, data: row, type: 'khata', primaryColor: _primaryColor,
-            ),
-          ),
+          child: _buildEditableKhataTable(),
         ),
       ],
+    );
+  }
+  
+  Widget _buildKhataEditToolbar() {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+      decoration: BoxDecoration(
+        color: _khataEditMode ? Colors.amber.shade50 : Colors.white,
+        border: Border(bottom: BorderSide(color: _borderColor)),
+      ),
+      child: Row(
+        children: [
+          // Edit mode toggle
+          ElevatedButton.icon(
+            onPressed: _toggleKhataEditMode,
+            icon: Icon(_khataEditMode ? Icons.close : Icons.edit, size: 18),
+            label: Text(_khataEditMode ? 'Exit Edit' : 'Edit Mode', 
+              style: GoogleFonts.poppins(fontWeight: FontWeight.w500)),
+            style: ElevatedButton.styleFrom(
+              backgroundColor: _khataEditMode ? Colors.grey.shade700 : _primaryColor,
+              foregroundColor: Colors.white,
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+            ),
+          ),
+          
+          if (_khataEditMode) ...[
+            const SizedBox(width: 12),
+            
+            // Save button
+            ElevatedButton.icon(
+              onPressed: _hasUnsavedKhataChanges ? _saveKhataChanges : null,
+              icon: const Icon(Icons.save, size: 18),
+              label: Text('Save (${_editedKhataRows.length})', 
+                style: GoogleFonts.poppins(fontWeight: FontWeight.w500)),
+              style: ElevatedButton.styleFrom(
+                backgroundColor: Colors.green.shade600,
+                foregroundColor: Colors.white,
+                disabledBackgroundColor: Colors.grey.shade300,
+                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+              ),
+            ),
+            
+            const SizedBox(width: 8),
+            
+            // Discard button
+            TextButton.icon(
+              onPressed: _hasUnsavedKhataChanges ? () {
+                setState(() {
+                  _editedKhataRows.clear();
+                  _hasUnsavedKhataChanges = false;
+                });
+                _loadKhatabook(); // Reload original data
+              } : null,
+              icon: const Icon(Icons.undo, size: 18),
+              label: Text('Discard', style: GoogleFonts.poppins()),
+              style: TextButton.styleFrom(
+                foregroundColor: Colors.red.shade600,
+              ),
+            ),
+          ],
+          
+          const Spacer(),
+          
+          // Hint text
+          if (_khataEditMode)
+            Text(
+              'Click cells to edit • Paid field editable for all entries',
+              style: GoogleFonts.poppins(fontSize: 12, color: Colors.grey.shade600),
+            ),
+            
+          // Download button
+          if (!_khataEditMode)
+            AnimatedDownloadButton(
+              key: _khataDownloadKey,
+              onPressed: _downloadKhatabookExcel,
+              primaryColor: _primaryColor,
+            ),
+        ],
+      ),
+    ).animate().fadeIn(duration: 200.ms);
+  }
+  
+  Widget _buildEditableKhataTable() {
+    if (_filteredKhatabook.isEmpty) {
+      return Center(
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Icon(Icons.inbox_rounded, size: 64, color: Colors.grey.shade300),
+            const SizedBox(height: 16),
+            Text('No entries found', style: GoogleFonts.poppins(
+              fontSize: 16, fontWeight: FontWeight.w500, color: Colors.grey.shade500)),
+            const SizedBox(height: 8),
+            TextButton.icon(
+              onPressed: _loadKhatabook,
+              icon: const Icon(Icons.refresh),
+              label: const Text('Refresh'),
+            ),
+          ],
+        ),
+      );
+    }
+    
+    final totalWidth = _khataColumns.fold<double>(0, (sum, c) => sum + (c['width'] as double));
+    
+    return SingleChildScrollView(
+      scrollDirection: Axis.horizontal,
+      child: SizedBox(
+        width: totalWidth + 50, // Extra for row numbers
+        child: Column(
+          children: [
+            // Header row
+            Container(
+              height: 44,
+              decoration: BoxDecoration(
+                color: _headerBg,
+                border: Border(bottom: BorderSide(color: _borderColor)),
+              ),
+              child: Row(
+                children: [
+                  // Row number header
+                  Container(
+                    width: 50,
+                    alignment: Alignment.center,
+                    child: Text('#', style: GoogleFonts.poppins(
+                      fontSize: 12, fontWeight: FontWeight.w600, color: Colors.grey.shade600)),
+                  ),
+                  ..._khataColumns.map((col) => Container(
+                    width: col['width'] as double,
+                    alignment: Alignment.centerLeft,
+                    padding: const EdgeInsets.symmetric(horizontal: 8),
+                    child: Text(col['label'] as String, style: GoogleFonts.poppins(
+                      fontSize: 12, fontWeight: FontWeight.w600, color: Colors.grey.shade700)),
+                  )),
+                ],
+              ),
+            ),
+            
+            // Data rows
+            Expanded(
+              child: ListView.builder(
+                itemCount: _filteredKhatabook.length,
+                itemBuilder: (context, rowIdx) => _buildEditableKhataRow(rowIdx),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+  
+  Widget _buildEditableKhataRow(int rowIdx) {
+    final row = _filteredKhatabook[rowIdx];
+    final rowId = _getKhataRowId(row);
+    final isEdited = _editedKhataRows.containsKey(rowId);
+    final isManual = row['is_manual'] == true;
+    
+    return Container(
+      height: 40,
+      decoration: BoxDecoration(
+        color: isEdited ? Colors.amber.shade50 : (rowIdx.isEven ? Colors.white : _headerBg),
+        border: Border(bottom: BorderSide(color: _borderColor.withOpacity(0.5))),
+      ),
+      child: Row(
+        children: [
+          // Row number
+          Container(
+            width: 50,
+            alignment: Alignment.center,
+            child: Text('${rowIdx + 1}', style: GoogleFonts.inter(fontSize: 12, color: Colors.grey)),
+          ),
+          // Data cells
+          ..._khataColumns.asMap().entries.map((entry) {
+            final colIdx = entry.key;
+            final col = entry.value;
+            final key = col['key'] as String;
+            final isEditing = _editingKhataRow == rowIdx && _editingKhataCol == colIdx;
+            final isEditable = _khataEditMode && _isKhataColEditable(key, row);
+            
+            final value = _getKhataCellValue(row, key);
+            
+            // Status column special styling
+            Widget? specialWidget;
+            if (key == 'status') {
+              final isSettled = value == 'Settled';
+              specialWidget = Container(
+                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                decoration: BoxDecoration(
+                  color: isSettled ? Colors.green.shade100 : Colors.orange.shade100,
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                child: Text(value, style: GoogleFonts.poppins(
+                  fontSize: 11, fontWeight: FontWeight.w600, 
+                  color: isSettled ? Colors.green.shade700 : Colors.orange.shade700)),
+              );
+            }
+            
+            return GestureDetector(
+              onTap: isEditable ? () => _onKhataCellTap(rowIdx, colIdx) : null,
+              child: Container(
+                width: col['width'] as double,
+                padding: const EdgeInsets.symmetric(horizontal: 8),
+                alignment: Alignment.centerLeft,
+                decoration: BoxDecoration(
+                  border: isEditable && _khataEditMode 
+                    ? Border.all(color: _primaryColor.withOpacity(0.3), width: 1)
+                    : null,
+                  color: isEditing ? Colors.blue.shade50 : null,
+                ),
+                child: isEditing
+                  ? TextField(
+                      controller: _khataEditController,
+                      focusNode: _khataEditFocusNode,
+                      style: GoogleFonts.inter(fontSize: 12),
+                      decoration: const InputDecoration(
+                        border: InputBorder.none,
+                        isDense: true,
+                        contentPadding: EdgeInsets.zero,
+                      ),
+                      onSubmitted: (_) => _onKhataCellEditComplete(rowIdx, colIdx),
+                      onEditingComplete: () => _onKhataCellEditComplete(rowIdx, colIdx),
+                    )
+                  : specialWidget ?? Text(
+                      value,
+                      style: GoogleFonts.inter(
+                        fontSize: 12, 
+                        color: isEditable && _khataEditMode ? _primaryColor : Colors.black87,
+                        decoration: isEditable && _khataEditMode ? TextDecoration.underline : null,
+                      ),
+                      overflow: TextOverflow.ellipsis,
+                    ),
+              ),
+            );
+          }),
+        ],
+      ),
     );
   }
   
