@@ -247,7 +247,62 @@ class _ReportsScreenState extends State<ReportsScreen> {
   Future<void> _loadKhatabook() async {
     setState(() => _khatabookLoading = true);
     try {
-      final entries = await KhatabookService.listEntries();
+      // Use same data source as Khatabook screen - inventory SOLD items + manual entries
+      final soldFuture = http.get(
+        Uri.parse('${AppConfig.baseUrl}/api/inventory').replace(queryParameters: {
+          'status': 'SOLD',
+          'sort': 'date',
+          'order': 'desc',
+        }),
+        headers: await _getAuthHeaders(),
+      );
+      final manualFuture = KhatabookService.listEntries();
+      
+      final soldResp = await soldFuture;
+      final manualRaw = await manualFuture;
+      
+      List<Map<String, dynamic>> entries = [];
+      
+      if (soldResp.statusCode == 200) {
+        final data = jsonDecode(soldResp.body);
+        final items = (data['items'] as List? ?? []).cast<Map>().map((e) => e.cast<String, dynamic>()).toList();
+        
+        // Add inventory items with parsed paid values
+        for (final item in items) {
+          final total = _getKhataTotal(item);
+          final paid = _getKhataPaid(item);
+          final remaining = (total - paid).clamp(0.0, double.infinity);
+          
+          entries.add({
+            'entryDate': item['sell_date'] ?? item['sellDate'] ?? item['created_at'],
+            'name': item['customer_name'] ?? item['customer'] ?? '-',
+            'mobile': item['customer_mobile'] ?? item['mobile'] ?? '-',
+            'amount': total,
+            'paid': paid,
+            'remaining': remaining,
+            'description': item['model'] ?? item['remarks'] ?? '-',
+            'is_inventory': true,
+            'sr_no': item['sr_no'],
+          });
+        }
+      }
+      
+      // Add manual khatabook entries
+      for (final entry in manualRaw) {
+        final amount = (entry['amount'] as num?)?.toDouble() ?? (entry['manual_amount'] as num?)?.toDouble() ?? 0;
+        final paid = (entry['paid'] as num?)?.toDouble() ?? (entry['manual_paid'] as num?)?.toDouble() ?? 0;
+        entries.add({
+          'entryDate': entry['entryDate'] ?? entry['entry_date'] ?? entry['created_at'],
+          'name': entry['name'] ?? '-',
+          'mobile': entry['mobile'] ?? '-',
+          'amount': amount,
+          'paid': paid,
+          'remaining': (amount - paid).clamp(0.0, double.infinity),
+          'description': entry['description'] ?? entry['manual_description'] ?? '-',
+          'is_manual': true,
+        });
+      }
+      
       _khatabook = entries;
       _applyKhataFilters();
     } catch (e) {
@@ -255,6 +310,41 @@ class _ReportsScreenState extends State<ReportsScreen> {
     } finally {
       if (mounted) setState(() => _khatabookLoading = false);
     }
+  }
+  
+  // Helper to get auth headers
+  Future<Map<String, String>> _getAuthHeaders() async {
+    final token = await AuthService().getToken();
+    final headers = <String, String>{'Content-Type': 'application/json'};
+    if (token != null) headers['Authorization'] = 'Bearer $token';
+    return headers;
+  }
+  
+  // Parse total amount (matches Khatabook screen logic)
+  double _getKhataTotal(Map<String, dynamic> r) {
+    if (r['is_manual'] == true || r.containsKey('manual_amount')) {
+      final amount = r['manual_amount'];
+      if (amount is num) return amount.toDouble();
+      return double.tryParse((amount ?? '').toString()) ?? 0.0;
+    }
+    final total = r['sell_amount'];
+    if (total is num) return total.toDouble();
+    return double.tryParse((total ?? '').toString().replaceAll(',', '')) ?? 0.0;
+  }
+  
+  // Parse paid amount from remarks (matches Khatabook screen logic)
+  double _getKhataPaid(Map<String, dynamic> r) {
+    if (r['is_manual'] == true || r.containsKey('manual_paid')) {
+      final paid = r['manual_paid'];
+      if (paid is num) return paid.toDouble();
+      return double.tryParse((paid ?? '').toString()) ?? 0.0;
+    }
+    final remarks = (r['remarks'] ?? '').toString();
+    final regex = RegExp(r'Paid\s*:?.*?₹?\s*([0-9][0-9,]*(?:\.[0-9]+)?)', caseSensitive: false);
+    final matches = regex.allMatches(remarks).toList();
+    if (matches.isEmpty) return 0.0;
+    final last = matches.last.group(1) ?? '0';
+    return double.tryParse(last.replaceAll(',', '')) ?? 0.0;
   }
   
   void _applyKhataFilters() {
