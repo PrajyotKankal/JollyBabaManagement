@@ -815,9 +815,15 @@ class TicketDetailsController extends GetxController {
       Get.back(result: ticket);
       return;
     } else if (lowerStatus == 'delivered') {
-      if (deliveryPhoto2.value == null) {
+      // Check for both file (mobile) and bytes (web)
+      final hasDeliveryPhoto = deliveryPhoto2.value != null || 
+          (deliveryPhoto2Bytes != null && deliveryPhoto2Bytes!.isNotEmpty);
+      
+      if (!hasDeliveryPhoto) {
         final uploaded = await _showSingleUploadDialogAndSetPhoto();
-        if (!uploaded || deliveryPhoto2.value == null) {
+        final hasPhotoAfterDialog = deliveryPhoto2.value != null || 
+            (deliveryPhoto2Bytes != null && deliveryPhoto2Bytes!.isNotEmpty);
+        if (!uploaded || !hasPhotoAfterDialog) {
           status = previousStatus;
           update();
           Get.snackbar(
@@ -881,23 +887,95 @@ class TicketDetailsController extends GetxController {
 
     debugPrint('saveTicketStatus: payload => $payload');
 
-    // Prepare persisted photo file if any
-    File? persistedPhotoFile;
+    // Handle delivery photo upload - check for web bytes or file
+    final hasWebDeliveryBytes = deliveryPhoto2Bytes != null && deliveryPhoto2Bytes!.isNotEmpty;
+    final hasDeliveryFile = deliveryPhoto2.value != null;
+    String? uploadedDeliveryPhotoUrl;
+    
     try {
-      if (deliveryPhoto2.value != null) {
+      if (hasWebDeliveryBytes) {
+        // Web platform: upload bytes via Cloudinary
+        Get.showSnackbar(const GetSnackBar(
+          message: 'Uploading delivery photo...',
+          showProgressIndicator: true,
+          isDismissible: false,
+          snackPosition: SnackPosition.BOTTOM,
+          duration: Duration(minutes: 1),
+        ));
+        
+        final notePayload = notesList
+            .map((n) => {
+                  'text': (n['text'] ?? '').toString(),
+                  'time': _noteIso(n['time']),
+                })
+            .toList();
+        
+        final response = await TicketService.uploadDeliveryPhotoFromBytes(
+          ticket['id'] as int,
+          deliveryPhoto2Bytes!,
+          fileName: deliveryPhoto2FileName ?? 'delivery_photo.jpg',
+          status: status,
+          notes: notePayload,
+        );
+        
+        Get.closeAllSnackbars();
+        
+        if (response == null || response['success'] != true) {
+          Get.snackbar(
+            'Photo Error',
+            'Failed to upload delivery photo. Please try again.',
+            backgroundColor: const Color.fromRGBO(244, 67, 54, 0.12),
+            colorText: Colors.black87,
+            snackPosition: SnackPosition.BOTTOM,
+          );
+          isSaving.value = false;
+          update();
+          return;
+        }
+        
+        // Photo uploaded and ticket updated via the upload function
+        uploadedDeliveryPhotoUrl = response['ticket']?['delivery_photo_2']?.toString();
+        
+        // Clear the bytes now that upload succeeded
+        deliveryPhoto2Bytes = null;
+        deliveryPhoto2FileName = null;
+        
+        // Update local ticket state
+        ticket['status'] = status;
+        ticket['delivery_photo_2'] = uploadedDeliveryPhotoUrl;
+        previousStatus = status;
+        _normalizePhotoPaths();
+        update();
+        
+        Get.snackbar(
+          '✅ Ticket Updated',
+          'Delivery photo saved successfully.',
+          backgroundColor: const Color.fromRGBO(76, 175, 80, 0.12),
+          colorText: Colors.black87,
+          snackPosition: SnackPosition.BOTTOM,
+          duration: const Duration(seconds: 2),
+        );
+        
+        await Future.delayed(const Duration(milliseconds: 700));
+        Get.back(result: ticket);
+        isSaving.value = false;
+        update();
+        return;
+      } else if (hasDeliveryFile) {
+        // Mobile platform: prepare and upload file
         var persisted = deliveryPhoto2.value!;
         if (!await persisted.exists()) {
           persisted = await _persistPickedFile(persisted);
           deliveryPhoto2.value = persisted;
         }
-        persistedPhotoFile = persisted;
         payload['delivery_photo_2'] = persisted.path;
       }
     } catch (e, st) {
-      debugPrint('Error preparing delivered photo: $e\n$st');
+      Get.closeAllSnackbars();
+      debugPrint('Error preparing/uploading delivery photo: $e\n$st');
       Get.snackbar(
         'Photo Error',
-        'Could not prepare delivery photo. Please try again.',
+        'Could not upload delivery photo. Please try again.',
         backgroundColor: const Color.fromRGBO(244, 67, 54, 0.12),
         colorText: Colors.black87,
         snackPosition: SnackPosition.BOTTOM,
@@ -926,8 +1004,8 @@ class TicketDetailsController extends GetxController {
         ticket['delivery_photo_1'] = ticket['delivery_photo'];
       }
 
-      if (persistedPhotoFile != null) {
-        ticket['delivery_photo_2'] = persistedPhotoFile.path;
+      if (deliveryPhoto2.value != null) {
+        ticket['delivery_photo_2'] = deliveryPhoto2.value!.path;
       }
 
       ticket['notes'] = payload['notes'];

@@ -186,6 +186,175 @@ class TicketService {
   }
 
   // ---------------------------------------------------------------------------
+  // ✅ Upload delivery photo (for mobile - uses Cloudinary upload then update)
+  // ---------------------------------------------------------------------------
+  static Future<Map<String, dynamic>?> uploadDeliveryPhoto(
+    int ticketId,
+    File file, {
+    String status = 'Delivered',
+    List<Map<String, dynamic>>? notes,
+  }) async {
+    if (!file.existsSync()) {
+      debugPrint('❌ uploadDeliveryPhoto: file not found at ${file.path}');
+      return null;
+    }
+
+    try {
+      // First upload to Cloudinary
+      final prepared = await _prepareFileForUpload(file);
+      final uploaded = await uploadFile(prepared);
+      
+      if (uploaded == null || uploaded['url'] == null) {
+        debugPrint('❌ uploadDeliveryPhoto: Cloudinary upload failed');
+        return null;
+      }
+
+      final photoUrl = uploaded['url'].toString();
+
+      // Now update the ticket with the photo URL
+      final updatePayload = <String, dynamic>{
+        'status': status,
+        'delivery_photo_2': photoUrl,
+      };
+      
+      if (notes != null) {
+        updatePayload['notes'] = notes;
+      }
+
+      final success = await updateTicket(ticketId, updatePayload);
+      
+      if (success) {
+        return {
+          'success': true,
+          'ticket': {
+            'id': ticketId,
+            'status': status,
+            'delivery_photo_2': photoUrl,
+          },
+        };
+      }
+      
+      return null;
+    } catch (e, st) {
+      debugPrint('❌ uploadDeliveryPhoto error: $e\n$st');
+      return null;
+    }
+  }
+
+  // ---------------------------------------------------------------------------
+  // ✅ Upload delivery photo from bytes (for web platform)
+  // ---------------------------------------------------------------------------
+  static Future<Map<String, dynamic>?> uploadDeliveryPhotoFromBytes(
+    int ticketId,
+    Uint8List bytes, {
+    String fileName = 'delivery_photo.jpg',
+    String status = 'Delivered',
+    List<Map<String, dynamic>>? notes,
+  }) async {
+    if (bytes.isEmpty) {
+      debugPrint('❌ uploadDeliveryPhotoFromBytes: empty bytes');
+      return null;
+    }
+
+    try {
+      // Request Cloudinary signature
+      final signature = await _requestCloudinarySignature();
+      if (signature == null) {
+        debugPrint('❌ uploadDeliveryPhotoFromBytes: failed to get signature');
+        return null;
+      }
+
+      final cloudName = signature['cloudName'];
+      final uploadUrl = Uri.parse('https://api.cloudinary.com/v1_1/$cloudName/image/upload');
+
+      // Infer mime type from filename
+      final ext = fileName.split('.').last.toLowerCase();
+      MediaType mimeType;
+      switch (ext) {
+        case 'png':
+          mimeType = MediaType('image', 'png');
+          break;
+        case 'gif':
+          mimeType = MediaType('image', 'gif');
+          break;
+        case 'webp':
+          mimeType = MediaType('image', 'webp');
+          break;
+        default:
+          mimeType = MediaType('image', 'jpeg');
+      }
+
+      // Upload to Cloudinary
+      final request = http.MultipartRequest('POST', uploadUrl)
+        ..fields['timestamp'] = signature['timestamp']
+        ..fields['signature'] = signature['signature']
+        ..fields['api_key'] = signature['apiKey'];
+
+      final folder = signature['folder'];
+      if (folder != null && folder.isNotEmpty) {
+        request.fields['folder'] = folder;
+      }
+
+      request.files.add(http.MultipartFile.fromBytes(
+        'file',
+        bytes,
+        filename: fileName,
+        contentType: mimeType,
+      ));
+
+      final streamed = await request.send().timeout(_timeout);
+      final response = await http.Response.fromStream(streamed);
+
+      if (response.statusCode < 200 || response.statusCode >= 300) {
+        debugPrint('❌ uploadDeliveryPhotoFromBytes: Cloudinary upload failed ${response.statusCode}');
+        return null;
+      }
+
+      final body = json.decode(response.body);
+      if (body is! Map || body['secure_url'] == null) {
+        debugPrint('❌ uploadDeliveryPhotoFromBytes: no secure_url in response');
+        return null;
+      }
+
+      final photoUrl = body['secure_url'].toString();
+
+      // Now update the ticket with the photo URL
+      final updatePayload = <String, dynamic>{
+        'status': status,
+        'delivery_photo_2': photoUrl,
+      };
+      
+      if (notes != null) {
+        updatePayload['notes'] = notes;
+      }
+
+      final success = await updateTicket(ticketId, updatePayload);
+      
+      if (success) {
+        return {
+          'success': true,
+          'ticket': {
+            'id': ticketId,
+            'status': status,
+            'delivery_photo_2': photoUrl,
+          },
+        };
+      }
+      
+      return null;
+    } on TimeoutException catch (e) {
+      debugPrint('❌ uploadDeliveryPhotoFromBytes timeout: $e');
+      return null;
+    } on SocketException catch (e) {
+      debugPrint('❌ uploadDeliveryPhotoFromBytes network error: $e');
+      return null;
+    } catch (e, st) {
+      debugPrint('❌ uploadDeliveryPhotoFromBytes unexpected: $e\n$st');
+      return null;
+    }
+  }
+
+  // ---------------------------------------------------------------------------
   // ✅ Fetch tickets for a specific technician (admin report)
   // ---------------------------------------------------------------------------
   static Future<List<Map<String, dynamic>>> fetchTicketsForTechnician({
