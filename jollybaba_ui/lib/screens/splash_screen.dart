@@ -6,9 +6,6 @@ import 'package:get/get.dart';
 
 import '../theme/app_colors.dart';
 import '../services/auth_service.dart';
-import 'login_screen.dart';
-import 'dashboard_screen.dart';
-import 'technician_dashboard_screen.dart';
 
 class SplashScreen extends StatefulWidget {
   const SplashScreen({super.key});
@@ -48,7 +45,7 @@ class _SplashScreenState extends State<SplashScreen>
     try {
       final token = await _auth.getToken();
       if (token == null || token.isEmpty) {
-        _navigateTo(const LoginScreen());
+        _navigateToRoute('/login');
         return;
       }
 
@@ -56,25 +53,24 @@ class _SplashScreenState extends State<SplashScreen>
       final role = (user['role'] ?? 'technician').toString().toLowerCase();
 
       if (role == 'admin') {
-        _navigateTo(const DashboardScreen());
+        _navigateToRoute('/admin');
       } else {
-        _navigateTo(const TechnicianDashboardScreen());
+        _navigateToRoute('/tech');
       }
     } catch (e) {
       // If something fails (network, 401, etc.), go to Login but keep stored session
       // so the user is not force-logged-out from storage.
-      _navigateTo(const LoginScreen());
+      _navigateToRoute('/login');
     }
   }
 
-  /// 🔄 Handles fade-out + navigation
-  Future<void> _navigateTo(Widget target) async {
+  /// 🔄 Handles fade-out + navigation using NAMED ROUTES
+  /// This fixes the /minified:h URL issue in production builds
+  Future<void> _navigateToRoute(String routeName) async {
     await _controller.reverse();
     await Future.delayed(const Duration(milliseconds: 200));
     if (mounted) {
-      Get.off(() => target,
-          transition: Transition.fadeIn,
-          duration: const Duration(milliseconds: 900));
+      Get.offAllNamed(routeName);
     }
   }
 
