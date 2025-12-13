@@ -367,9 +367,14 @@ class TicketService {
       'perPage': perPage.toString(),
       'technicianEmail': email,
     };
+    // Add cache-busting timestamp to prevent browser/server caching
+    query['_t'] = DateTime.now().millisecondsSinceEpoch.toString();
 
     final uri = Uri.parse('${AppConfig.baseUrl}/api/tickets').replace(queryParameters: query);
     final headers = await _buildHeaders();
+    // Add cache-control headers to ensure fresh data
+    headers['Cache-Control'] = 'no-cache, no-store, must-revalidate';
+    headers['Pragma'] = 'no-cache';
 
     try {
       final resp = await http.get(uri, headers: headers).timeout(_timeout);
@@ -641,9 +646,14 @@ class TicketService {
     if (statusValue != null && statusValue.isNotEmpty) {
       query['status'] = statusValue;
     }
+    // Add cache-busting timestamp to prevent browser/server caching
+    query['_t'] = DateTime.now().millisecondsSinceEpoch.toString();
 
     final uri = Uri.parse('${AppConfig.baseUrl}/api/tickets').replace(queryParameters: query);
     final headers = await _buildHeaders();
+    // Add cache-control headers to ensure fresh data
+    headers['Cache-Control'] = 'no-cache, no-store, must-revalidate';
+    headers['Pragma'] = 'no-cache';
 
     try {
       final resp = await http.get(uri, headers: headers).timeout(_timeout);
