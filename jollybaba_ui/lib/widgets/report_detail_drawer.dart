@@ -2,6 +2,7 @@
 // Premium detail drawer/bottom sheet for report rows
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:flutter_animate/flutter_animate.dart';
 import 'package:intl/intl.dart';
@@ -397,11 +398,61 @@ class ReportDetailDrawer extends StatelessWidget {
   }
 
   void _shareDetails(BuildContext context) {
-    // TODO: Implement share functionality
+    // Build a text summary of the details
+    final StringBuffer sb = StringBuffer();
+    
+    switch (type) {
+      case 'ticket':
+        sb.writeln('🎫 Ticket Details');
+        sb.writeln('─────────────────');
+        sb.writeln('Customer: ${data['customer_name'] ?? '-'}');
+        sb.writeln('Device: ${data['device_model'] ?? '-'}');
+        sb.writeln('Phone: ${data['mobile_number'] ?? '-'}');
+        sb.writeln('Issue: ${data['issue_description'] ?? '-'}');
+        sb.writeln('Status: ${data['status'] ?? 'Pending'}');
+        sb.writeln('Assigned: ${data['assigned_technician'] ?? '-'}');
+        if (data['estimated_cost'] != null) {
+          sb.writeln('Est. Cost: ₹${data['estimated_cost']}');
+        }
+        break;
+      case 'khata':
+        final amount = (data['amount'] as num?)?.toDouble() ?? 0;
+        final paid = (data['paid'] as num?)?.toDouble() ?? 0;
+        sb.writeln('📖 Khata Entry');
+        sb.writeln('─────────────────');
+        sb.writeln('Name: ${data['name'] ?? '-'}');
+        sb.writeln('Mobile: ${data['mobile'] ?? '-'}');
+        sb.writeln('Total: ₹${amount.toStringAsFixed(0)}');
+        sb.writeln('Paid: ₹${paid.toStringAsFixed(0)}');
+        sb.writeln('Remaining: ₹${(amount - paid).toStringAsFixed(0)}');
+        break;
+      case 'customer':
+        sb.writeln('👤 Customer Details');
+        sb.writeln('─────────────────');
+        sb.writeln('Name: ${data['name'] ?? '-'}');
+        sb.writeln('Phone: ${data['phone'] ?? '-'}');
+        sb.writeln('Tickets: ${data['ticketCount'] ?? 0}');
+        sb.writeln('Purchases: ${data['purchaseCount'] ?? 0}');
+        break;
+    }
+    
+    sb.writeln('\nShared from JollyBaba App');
+    
+    // Copy to clipboard and show confirmation
+    Clipboard.setData(ClipboardData(text: sb.toString()));
+    
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
-        content: Text('Share feature coming soon!', style: GoogleFonts.poppins()),
+        content: Row(
+          children: [
+            const Icon(Icons.check_circle, color: Colors.white, size: 20),
+            const SizedBox(width: 8),
+            Text('Details copied to clipboard!', style: GoogleFonts.poppins()),
+          ],
+        ),
+        backgroundColor: Colors.green.shade600,
         behavior: SnackBarBehavior.floating,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
       ),
     );
   }

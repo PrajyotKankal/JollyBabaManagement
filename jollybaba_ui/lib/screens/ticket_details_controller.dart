@@ -53,6 +53,14 @@ class TicketDetailsController extends GetxController {
   // track original notes count so we know if user added new notes
   int _originalNotesCount = 0;
 
+  // Helper for safe ticket ID access
+  int get _ticketId {
+    final id = ticket['id'];
+    if (id is int) return id;
+    if (id is String) return int.tryParse(id) ?? 0;
+    return 0;
+  }
+
   bool _initialized = false;
   String?
   _initializedTicketId; // remember which ticket id this controller was init'd for
@@ -715,7 +723,7 @@ class TicketDetailsController extends GetxController {
       if (hasWebBytes) {
         // Upload from bytes (web)
         response = await TicketService.uploadRepairedPhotoFromBytes(
-          ticket['id'] as int,
+          _ticketId,
           repairedPhotoBytes!,
           fileName: repairedPhotoFileName ?? 'repaired_photo.jpg',
           notes: notePayload,
@@ -723,7 +731,7 @@ class TicketDetailsController extends GetxController {
       } else if (local != null) {
         // Upload from file (mobile)
         response = await TicketService.uploadRepairedPhoto(
-          ticket['id'] as int,
+          _ticketId,
           local,
           notes: notePayload,
         );
@@ -911,7 +919,7 @@ class TicketDetailsController extends GetxController {
             .toList();
         
         final response = await TicketService.uploadDeliveryPhotoFromBytes(
-          ticket['id'] as int,
+          _ticketId,
           deliveryPhoto2Bytes!,
           fileName: deliveryPhoto2FileName ?? 'delivery_photo.jpg',
           status: status,
@@ -1010,7 +1018,7 @@ class TicketDetailsController extends GetxController {
 
       ticket['notes'] = payload['notes'];
       ticket['technician_notes'] = notesList
-          .map((n) => n['text'] as String)
+          .map((n) => (n['text'] ?? '').toString())
           .join('\n\n');
 
       _originalNotesCount = notesList.length;
