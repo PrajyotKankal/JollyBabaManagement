@@ -3,7 +3,10 @@ import 'package:get/get.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:flutter_animate/flutter_animate.dart';
 import '../services/auth_service.dart';
+import '../services/ticket_service.dart';
+import '../utils/responsive_helper.dart';
 import 'login_screen.dart';
+import 'technician_report_screen.dart';
 
 class TechniciansScreen extends StatefulWidget {
   const TechniciansScreen({super.key});
@@ -14,9 +17,15 @@ class TechniciansScreen extends StatefulWidget {
 
 class _TechniciansScreenState extends State<TechniciansScreen> {
   static const _adminEmail = 'admin@jollybaba.com';
+  static const _googleAdminEmail = 'jollybaba30@gmail.com';
   final AuthService _authService = AuthService();
   bool _isLoading = true;
   List<Map<String, dynamic>> _technicians = [];
+
+  // overall ticket stats for management overview
+  int _overallTotal = 0;
+  int _overallPending = 0;
+  int _overallCompleted = 0;
 
   // form controllers
   final TextEditingController _nameCtrl = TextEditingController();
@@ -28,6 +37,7 @@ class _TechniciansScreenState extends State<TechniciansScreen> {
   void initState() {
     super.initState();
     _loadTechnicians();
+    _loadOverallTicketStats();
   }
 
   Future<void> _loadTechnicians() async {
@@ -41,7 +51,8 @@ class _TechniciansScreenState extends State<TechniciansScreen> {
           if (entry is Map) {
             final map = Map<String, dynamic>.from(entry);
             final email = (map['email'] ?? '').toString().toLowerCase();
-            if (email != _adminEmail) rows.add(map);
+            if (email == _adminEmail || email == _googleAdminEmail) continue;
+            rows.add(map);
           }
         }
         _technicians = rows;
@@ -50,17 +61,45 @@ class _TechniciansScreenState extends State<TechniciansScreen> {
     } catch (e) {
       debugPrint("❌ Error fetching technicians: $e");
       setState(() => _isLoading = false);
+      // DON'T auto-logout on errors - just show error message
+      Get.snackbar("Error", e.toString(),
+          snackPosition: SnackPosition.BOTTOM,
+          backgroundColor: Colors.redAccent.withOpacity(0.8),
+          colorText: Colors.white);
+    }
+  }
 
-      if (e.toString().contains("401")) {
-        await _authService.logout();
-        if (!mounted) return;
-        Get.offAll(() => const LoginScreen());
-      } else {
-        Get.snackbar("Error", e.toString(),
-            snackPosition: SnackPosition.BOTTOM,
-            backgroundColor: Colors.redAccent.withOpacity(0.8),
-            colorText: Colors.white);
+  Future<void> _loadOverallTicketStats() async {
+    try {
+      final tickets = await TicketService.fetchTickets(
+        page: 1,
+        perPage: 500,
+        mineOnly: false,
+      );
+
+      int pending = 0;
+      int completed = 0;
+
+      for (final t in tickets) {
+        final norm = (t['status_normalized'] ?? '').toString();
+        if (norm == 'pending') {
+          pending++;
+        } else if (norm == 'repaired' || norm == 'delivered') {
+          completed++;
+        }
       }
+
+      // Define Total as Completed + Pending so chips always add up
+      final total = pending + completed;
+
+      if (!mounted) return;
+      setState(() {
+        _overallTotal = total;
+        _overallPending = pending;
+        _overallCompleted = completed;
+      });
+    } catch (e) {
+      debugPrint('❌ Error loading overall ticket stats: $e');
     }
   }
 
@@ -219,6 +258,9 @@ class _TechniciansScreenState extends State<TechniciansScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final deviceType = ResponsiveHelper.getDeviceType(context);
+    final responsivePadding = deviceType == DeviceType.mobile ? 14.0 : deviceType == DeviceType.tablet ? 18.0 : 24.0;
+    
     return Scaffold(
       backgroundColor: const Color(0xFFF8FAFF),
       appBar: AppBar(
@@ -247,48 +289,143 @@ class _TechniciansScreenState extends State<TechniciansScreen> {
       body: _isLoading
           ? const Center(child: CircularProgressIndicator())
           : RefreshIndicator(
-              onRefresh: _loadTechnicians,
-              child: ListView.builder(
-                padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
-                itemCount: _technicians.length,
-                itemBuilder: (context, index) {
-                  final tech = _technicians[index];
-                  return _buildTechnicianCard(tech)
-                      .animate(delay: (index * 100).ms)
-                      .fadeIn(duration: 400.ms)
-                      .slideY(begin: 0.15, curve: Curves.easeOut);
-                },
+              onRefresh: () async {
+                await _loadTechnicians();
+                await _loadOverallTicketStats();
+              },
+              child: ListView(
+                padding: EdgeInsets.symmetric(horizontal: responsivePadding, vertical: 10),
+                children: [
+                  _buildOverallStatsCard(deviceType),
+                  const SizedBox(height: 12),
+                  ..._technicians.asMap().entries.map((entry) {
+                    final index = entry.key;
+                    final tech = entry.value;
+                    return _buildTechnicianCard(tech, deviceType)
+                        .animate(delay: (index * 100).ms)
+                        .fadeIn(duration: 400.ms)
+                        .slideY(begin: 0.15, curve: Curves.easeOut);
+                  }),
+                ],
               ),
             ),
     );
   }
 
-  Widget _buildTechnicianCard(Map<String, dynamic> tech) {
+  Widget _buildOverallStatsCard(DeviceType deviceType) {
+    return Card(
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(18)),
+      elevation: 3,
+      child: Padding(
+        padding: EdgeInsets.all(deviceType == DeviceType.mobile ? 14 : 16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              'Overall Ticket Overview',
+              style: GoogleFonts.poppins(
+                fontSize: deviceType == DeviceType.mobile ? 14 : 15,
+                fontWeight: FontWeight.w600,
+                color: const Color(0xFF2A2E45),
+              ),
+            ),
+            const SizedBox(height: 12),
+            Row(
+              children: [
+                Expanded(
+                  child: _buildStatChip('Total', _overallTotal.toString(), const Color(0xFF1E88E5)),
+                ),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: _buildStatChip('Completed', _overallCompleted.toString(), const Color(0xFF43A047)),
+                ),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: _buildStatChip('Pending', _overallPending.toString(), const Color(0xFFEF6C00)),
+                ),
+              ],
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildStatChip(String label, String value, Color color) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+      decoration: BoxDecoration(
+        color: color.withOpacity(0.06),
+        borderRadius: BorderRadius.circular(12),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            label,
+            style: GoogleFonts.poppins(fontSize: 11, color: color.withOpacity(0.9)),
+          ),
+          const SizedBox(height: 4),
+          Text(
+            value,
+            style: GoogleFonts.poppins(
+              fontSize: 14,
+              fontWeight: FontWeight.w600,
+              color: color,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildTechnicianCard(Map<String, dynamic> tech, DeviceType deviceType) {
+    final titleFontSize = deviceType == DeviceType.mobile ? 14.0 : 15.0;
+    final subtitleFontSize = deviceType == DeviceType.mobile ? 11.0 : 12.0;
+    
     return Card(
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-      margin: const EdgeInsets.symmetric(vertical: 8),
+      margin: EdgeInsets.symmetric(vertical: deviceType == DeviceType.mobile ? 6 : 8),
       elevation: 3,
       child: ListTile(
-        contentPadding:
-            const EdgeInsets.symmetric(horizontal: 18, vertical: 12),
+        contentPadding: EdgeInsets.symmetric(
+          horizontal: deviceType == DeviceType.mobile ? 14 : 18,
+          vertical: deviceType == DeviceType.mobile ? 10 : 12,
+        ),
         leading: CircleAvatar(
-          radius: 22,
+          radius: deviceType == DeviceType.mobile ? 20 : 22,
           backgroundColor: const Color(0xFF6D5DF6).withOpacity(0.15),
-          child: const Icon(Icons.engineering_rounded,
-              color: Color(0xFF6D5DF6), size: 22),
+          child: Icon(Icons.engineering_rounded,
+              color: const Color(0xFF6D5DF6), 
+              size: deviceType == DeviceType.mobile ? 20 : 22),
         ),
         title: Text(
           tech['name'] ?? 'Unnamed',
           style: GoogleFonts.poppins(
-              fontSize: 15, fontWeight: FontWeight.w600, color: Colors.black87),
+            fontSize: titleFontSize,
+            fontWeight: FontWeight.w600,
+            color: Colors.black87,
+          ),
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
         ),
         subtitle: Text(
           tech['email'] ?? '',
-          style: GoogleFonts.poppins(fontSize: 12, color: Colors.black54),
+          style: GoogleFonts.poppins(fontSize: subtitleFontSize, color: Colors.black54),
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
         ),
+        onTap: () {
+          Get.to(
+            () => TechnicianReportScreen(technician: tech),
+            transition: Transition.rightToLeft,
+            duration: const Duration(milliseconds: 350),
+          );
+        },
         trailing: IconButton(
           icon: const Icon(Icons.delete_rounded, color: Colors.redAccent),
           onPressed: () => _deleteTechnician(tech),
+          iconSize: deviceType == DeviceType.mobile ? 20 : 24,
         ),
       ),
     );

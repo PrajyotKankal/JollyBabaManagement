@@ -1,0 +1,45 @@
+﻿[ΓêÜ] Flutter (Channel stable, 3.35.7, on Microsoft Windows [Version 10.0.26100.7171], locale en-US) [1,483ms]
+    ΓÇó Flutter version 3.35.7 on channel stable at C:\Users\Lenovo\Downloads\flutter
+    ΓÇó Upstream repository https://github.com/flutter/flutter.git
+    ΓÇó Framework revision adc9010625 (6 weeks ago), 2025-10-21 14:16:03 -0400
+    ΓÇó Engine revision 035316565a
+    ΓÇó Dart version 3.9.2
+    ΓÇó DevTools version 2.48.0
+    ΓÇó Feature flags: enable-web, enable-linux-desktop, enable-macos-desktop, enable-windows-desktop, enable-android, enable-ios, cli-animations, enable-lldb-debugging
+
+[ΓêÜ] Windows Version (11 Pro 64-bit, 24H2, 2009) [1,748ms]
+
+[X] Android toolchain - develop for Android devices [993ms]
+    ΓÇó Android SDK at C:\Users\Lenovo\AppData\Local\Android\sdk
+    ΓÇó Emulator version 35.6.11.0 (build_id 13610412) (CL:N/A)
+    X cmdline-tools component is missing.
+      Try installing or updating Android Studio.
+      Alternatively, download the tools from https://developer.android.com/studio#command-line-tools-only and make sure to set the ANDROID_HOME environment variable.
+      See https://developer.android.com/studio/command-line for more details.
+
+[ΓêÜ] Chrome - develop for the web [714ms]
+    ΓÇó Chrome at C:\Program Files\Google\Chrome\Application\chrome.exe
+
+[!] Visual Studio - develop Windows apps (Visual Studio Build Tools 2022 17.14.19) [708ms]
+    ΓÇó Visual Studio at C:\Program Files (x86)\Microsoft Visual Studio\2022\BuildTools
+    ΓÇó Visual Studio Build Tools 2022 version 17.14.36623.8
+    ΓÇó Windows 10 SDK version 10.0.19041.0
+    X Visual Studio is missing necessary components. Please re-run the Visual Studio installer for the "Desktop development with C++" workload, and include these components:
+        MSVC v142 - VS 2019 C++ x64/x86 build tools
+         - If there are multiple build tool versions available, install the latest
+        C++ CMake tools for Windows
+        Windows 10 SDK
+
+[!] Android Studio (not installed) [8ms]
+    ΓÇó Android Studio not found; download from https://developer.android.com/studio/index.html
+      (or visit https://flutter.dev/to/windows-android-setup for detailed instructions).
+
+[ΓêÜ] Connected device (3 available) [239ms]
+    ΓÇó Windows (desktop) ΓÇó windows ΓÇó windows-x64    ΓÇó Microsoft Windows [Version 10.0.26100.7171]
+    ΓÇó Chrome (web)      ΓÇó chrome  ΓÇó web-javascript ΓÇó Google Chrome 142.0.7444.176
+    ΓÇó Edge (web)        ΓÇó edge    ΓÇó web-javascript ΓÇó Microsoft Edge 142.0.3595.94
+
+[ΓêÜ] Network resources [798ms]
+    ΓÇó All expected network resources are available.
+
+! Doctor found issues in 3 categories.

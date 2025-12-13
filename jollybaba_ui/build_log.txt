@@ -1,0 +1,27 @@
+﻿Running Gradle task 'assembleRelease'...                        
+
+ERROR: JAVA_HOME is set to an invalid directory: C:\Program Files\Microsoft\jdk-17.0.13.11-hotspot
+
+Please set the JAVA_HOME variable in your environment to match the
+location of your Java installation.
+Running Gradle task 'assembleRelease'...                            58ms
+flutter : Gradle task 
+assembleRelease failed 
+with exit code 1
+At line:1 char:71
++ ... 1-hotspot"; flutter 
+build apk --release --dart
+-define=API_BASE_URL=ht 
+...
++                 ~~~~~~~~
+~~~~~~~~~~~~~~~~~~~~~~~~~~
+~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo        
+      : NotSpecified: (G  
+  radle task ass...ith    
+ exit code 1:String) [    
+], RemoteException
+    + FullyQualifiedError 
+   Id : NativeCommandErr  
+  or
+ 

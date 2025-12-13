@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 import '../ticket_details_controller.dart';
 import 'status_dropdown.dart';
+import 'package:intl/intl.dart';
 
 class CustomerInfoCard extends StatelessWidget {
   final TicketDetailsController controller;
@@ -14,6 +15,19 @@ class CustomerInfoCard extends StatelessWidget {
 
     final createdBy = controller.createdBy.trim();
     final assignedTo = controller.assignedTechnician.trim();
+    final updatedBy = (ticket['last_worked_by_name'] ?? ticket['last_worked_by_email'] ?? '')
+        .toString()
+        .trim();
+    final updatedAtRaw = ticket['last_worked_at']?.toString() ?? '';
+    String updatedAtDisplay = '';
+    if (updatedAtRaw.isNotEmpty) {
+      try {
+        updatedAtDisplay = DateFormat('MMM d, h:mm a')
+            .format(DateTime.parse(updatedAtRaw).toLocal());
+      } catch (_) {
+        updatedAtDisplay = updatedAtRaw;
+      }
+    }
 
     return _glassCard(
       child: Column(
@@ -40,6 +54,14 @@ class CustomerInfoCard extends StatelessWidget {
           // NEW: show who created the ticket (if available) and assigned technician
           _detailRow("Created By", createdBy.isNotEmpty ? createdBy : "-"),
           _detailRow("Assigned To", assignedTo.isNotEmpty ? assignedTo : "-"),
+          _detailRow(
+            "Updated By",
+            updatedBy.isNotEmpty
+                ? (updatedAtDisplay.isNotEmpty
+                    ? '$updatedBy — $updatedAtDisplay'
+                    : updatedBy)
+                : '-',
+          ),
 
           const SizedBox(height: 14),
           StatusDropdown(controller: controller),

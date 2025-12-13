@@ -1,19 +1,26 @@
 // 📁 lib/screens/settings_screen.dart
+// Premium Settings Screen with sectioned layout and responsive design
+
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:flutter_animate/flutter_animate.dart';
 import 'package:get/get.dart';
-import 'package:vector_math/vector_math_64.dart' as vm;
 
 import '../services/auth_service.dart';
+import '../utils/responsive_helper.dart';
 import 'technician_management_screen.dart';
 import 'dashboard_screen.dart';
 import 'login_screen.dart';
 import '../widgets/bottom_glass_navbar.dart';
 import 'inventory_management_screen.dart';
 import 'khatabook_screen.dart';
-import 'profile_screen.dart';
 import 'about_app_screen.dart';
+import 'reports_screen.dart';
+
+// Premium settings widgets
+import '../widgets/settings_profile_card.dart';
+import '../widgets/settings_section.dart';
+import '../widgets/settings_tile.dart';
 
 class SettingsScreen extends StatefulWidget {
   final bool showBottomNav;
@@ -28,49 +35,20 @@ class _SettingsScreenState extends State<SettingsScreen>
   AnimationController? glowController;
   Animation<double>? glowAnimation;
   final AuthService _auth = AuthService();
+  
+  bool _isAdmin = false;
+  String _userName = 'User';
+  String _userRole = 'Technician';
+  int _ticketsToday = 0;
+  int _pendingCount = 0;
 
-  final List<Map<String, dynamic>> settingsOptions = [
-    {
-      "title": "Inventory",
-      "icon": Icons.inventory_rounded,
-      "colors": [Color(0xFF8A7CFF), Color(0xFFB49BFF)],
-      "subtitle": "Manage stock & spare parts",
-    },
-    {
-      "title": "Technicians",
-      "icon": Icons.engineering_rounded,
-      "colors": [Color(0xFF6D5DF6), Color(0xFF9D8BFE)],
-      "subtitle": "Create & manage technicians",
-    },
-    {
-      "title": "Khatabook",
-      "icon": Icons.menu_book_rounded,
-      "colors": [Color(0xFF00C6FF), Color(0xFF0072FF)],
-      "subtitle": "Credits, cash, and settlements",
-    },
-    {
-      "title": "Profile",
-      "icon": Icons.person_rounded,
-      "colors": [Color(0xFFFF9A9E), Color(0xFFFAD0C4)],
-      "subtitle": "Manage account details",
-    },
-    {
-      "title": "About App",
-      "icon": Icons.info_rounded,
-      "colors": [Color(0xFF43CBFF), Color(0xFF9708CC)],
-      "subtitle": "Version & details",
-    },
-    {
-      "title": "Logout",
-      "icon": Icons.logout_rounded,
-      "colors": [Color(0xFFFF6A88), Color(0xFFFF99AC)],
-      "subtitle": "Sign out of account",
-    },
-  ];
+  // Theme colors
+  static const Color _primaryColor = Color(0xFF6D5DF6);
 
   @override
   void initState() {
     super.initState();
+    _loadUserData();
     if (widget.showBottomNav) {
       glowController = AnimationController(
         vsync: this,
@@ -83,6 +61,22 @@ class _SettingsScreenState extends State<SettingsScreen>
     }
   }
 
+  Future<void> _loadUserData() async {
+    try {
+      final user = await _auth.getStoredUser();
+      if (user != null && mounted) {
+        final role = (user['role'] ?? '').toString();
+        setState(() {
+          _isAdmin = role.toLowerCase() == 'admin';
+          _userName = user['name']?.toString() ?? user['email']?.toString() ?? 'User';
+          _userRole = _isAdmin ? 'Admin' : 'Technician';
+          _ticketsToday = 0;
+          _pendingCount = 0;
+        });
+      }
+    } catch (_) {}
+  }
+
   @override
   void dispose() {
     glowController?.dispose();
@@ -91,28 +85,29 @@ class _SettingsScreenState extends State<SettingsScreen>
 
   @override
   Widget build(BuildContext context) {
-    final width = MediaQuery.of(context).size.width;
-    final isMobile = width < 600;
-    final maxCrossAxisExtent = isMobile ? 320.0 : 280.0;
+    final deviceType = ResponsiveHelper.getDeviceType(context);
+    final isMobile = deviceType == DeviceType.mobile;
+    final isDesktop = deviceType == DeviceType.desktop;
 
     return Scaffold(
-      backgroundColor: const Color(0xFFF8FAFF),
+      backgroundColor: const Color(0xFFF8FAFC),
       appBar: AppBar(
         backgroundColor: Colors.white,
-        elevation: 0.3,
+        elevation: 0,
+        scrolledUnderElevation: 1,
         centerTitle: true,
         title: Text(
           "Settings",
           style: GoogleFonts.poppins(
             fontWeight: FontWeight.w600,
             fontSize: isMobile ? 18 : 20,
-            color: const Color(0xFF2A2E45),
+            color: const Color(0xFF1E2343),
           ),
         ),
         leading: widget.showBottomNav
             ? IconButton(
                 icon: const Icon(Icons.arrow_back_ios_new_rounded,
-                    color: Color(0xFF2A2E45), size: 20),
+                    color: Color(0xFF1E2343), size: 20),
                 onPressed: () {
                   Get.off(() => const DashboardScreen(),
                       transition: Transition.leftToRight,
@@ -121,30 +116,7 @@ class _SettingsScreenState extends State<SettingsScreen>
               )
             : null,
       ),
-      body: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 10),
-        child: GridView.builder(
-          physics: const BouncingScrollPhysics(),
-          gridDelegate: SliverGridDelegateWithMaxCrossAxisExtent(
-            maxCrossAxisExtent: maxCrossAxisExtent,
-            childAspectRatio: 1.05,
-            crossAxisSpacing: 16,
-            mainAxisSpacing: 16,
-          ),
-          itemCount: settingsOptions.length,
-          itemBuilder: (context, index) {
-            final item = settingsOptions[index];
-            return SettingsCard(
-              title: item["title"] as String,
-              subtitle: item["subtitle"] as String,
-              icon: item["icon"] as IconData,
-              colors: List<Color>.from(item["colors"] as List<Color>),
-              delay: index * 120,
-              onTap: () => _handleTap(item["title"] as String),
-            );
-          },
-        ),
-      ),
+      body: isDesktop ? _buildDesktopLayout() : _buildMobileLayout(),
       bottomNavigationBar: (widget.showBottomNav &&
               glowController != null &&
               glowAnimation != null)
@@ -167,190 +139,278 @@ class _SettingsScreenState extends State<SettingsScreen>
     );
   }
 
-  /// Handles each setting card tap
-  void _handleTap(String title) {
-    switch (title) {
-      case "Inventory":
-        Get.to(() => InventoryManagementScreen(),
-            transition: Transition.rightToLeft,
-            duration: const Duration(milliseconds: 400));
-        break;
-      case "Khatabook":
-        Get.to(() => const KhatabookScreen(),
-            transition: Transition.rightToLeft,
-            duration: const Duration(milliseconds: 400));
-        break;
-      case "Technicians":
-        Get.to(() => const TechniciansScreen(),
-            transition: Transition.rightToLeft,
-            duration: const Duration(milliseconds: 400));
-        break;
-      case "Profile":
-        Get.to(() => const ProfileScreen(),
-            transition: Transition.rightToLeft,
-            duration: const Duration(milliseconds: 400));
-        break;
-      case "About App":
-        Get.to(() => const AboutAppScreen(),
-            transition: Transition.rightToLeft,
-            duration: const Duration(milliseconds: 400));
-        break;
+  // MOBILE LAYOUT - Single column list
+  Widget _buildMobileLayout() {
+    return Center(
+      child: ConstrainedBox(
+        constraints: const BoxConstraints(maxWidth: 600),
+        child: ListView(
+          physics: const BouncingScrollPhysics(),
+          padding: EdgeInsets.only(
+            top: 8,
+            bottom: widget.showBottomNav ? 140 : 40, // Fixed: More padding for navbar
+          ),
+          children: [
+            // Profile Header
+            SettingsProfileCard(
+              userName: _userName,
+              role: _userRole,
+              ticketsToday: _ticketsToday,
+              pendingCount: _pendingCount,
+              primaryColor: _primaryColor,
+            ),
 
-      case "Logout":
-        _confirmLogout();
-        break;
+            // Management Section
+            _buildManagementSection(100),
 
-      default:
-        Get.snackbar(
-          "Coming soon",
-          "$title section is under development.",
-          snackPosition: SnackPosition.BOTTOM,
-          backgroundColor: Colors.black.withOpacity(0.7),
-          colorText: Colors.white,
-        );
-        break;
-    }
+            // Reports Section (Admin only)
+            if (_isAdmin) _buildReportsSection(200),
+
+            // About Section
+            _buildAboutSection(_isAdmin ? 300 : 200),
+
+            const SizedBox(height: 24),
+          ],
+        ),
+      ),
+    );
+  }
+
+  // DESKTOP LAYOUT - Bento grid style
+  Widget _buildDesktopLayout() {
+    return Center(
+      child: ConstrainedBox(
+        constraints: const BoxConstraints(maxWidth: 1000),
+        child: SingleChildScrollView(
+          physics: const BouncingScrollPhysics(),
+          padding: const EdgeInsets.all(24),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              // Top row: Profile + Quick Stats
+              Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  // Profile card (takes 2/3)
+                  Expanded(
+                    flex: 2,
+                    child: SettingsProfileCard(
+                      userName: _userName,
+                      role: _userRole,
+                      ticketsToday: _ticketsToday,
+                      pendingCount: _pendingCount,
+                      primaryColor: _primaryColor,
+                    ),
+                  ),
+                ],
+              ),
+
+              const SizedBox(height: 8),
+
+              // Settings grid - 2 columns
+              Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  // Left column
+                  Expanded(
+                    child: Column(
+                      children: [
+                        _buildManagementSection(100),
+                      ],
+                    ),
+                  ),
+                  const SizedBox(width: 16),
+                  // Right column
+                  Expanded(
+                    child: Column(
+                      children: [
+                        if (_isAdmin) _buildReportsSection(200),
+                        _buildAboutSection(_isAdmin ? 300 : 200),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+
+              const SizedBox(height: 40),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildManagementSection(int delay) {
+    return SettingsSection(
+      title: 'Management',
+      icon: Icons.settings_outlined,
+      animationDelay: delay,
+      children: [
+        SettingsTile(
+          title: 'Inventory',
+          subtitle: 'Manage stock & spare parts',
+          icon: Icons.inventory_2_rounded,
+          iconColor: const Color(0xFF8A7CFF),
+          onTap: () {
+            debugPrint('Navigating to Inventory');
+            Get.to(() => InventoryManagementScreen(),
+                transition: Transition.rightToLeft,
+                duration: const Duration(milliseconds: 400));
+          },
+        ),
+        SettingsTile(
+          title: 'Technicians',
+          subtitle: 'Create & manage technicians',
+          icon: Icons.engineering_rounded,
+          iconColor: const Color(0xFF6D5DF6),
+          onTap: () {
+            debugPrint('Navigating to Technicians');
+            Get.to(() => const TechniciansScreen(),
+                transition: Transition.rightToLeft,
+                duration: const Duration(milliseconds: 400));
+          },
+        ),
+        SettingsTile(
+          title: 'Khatabook',
+          subtitle: 'Credits, cash, and settlements',
+          icon: Icons.menu_book_rounded,
+          iconColor: const Color(0xFF00C6FF),
+          onTap: () {
+            debugPrint('Navigating to Khatabook');
+            Get.to(() => const KhatabookScreen(),
+                transition: Transition.rightToLeft,
+                duration: const Duration(milliseconds: 400));
+          },
+        ),
+      ],
+    );
+  }
+
+  Widget _buildReportsSection(int delay) {
+    return SettingsSection(
+      title: 'Reports',
+      icon: Icons.analytics_outlined,
+      animationDelay: delay,
+      accentColor: Colors.orange,
+      children: [
+        SettingsTile(
+          title: 'Reports & Analytics',
+          subtitle: 'Excel view, inventory & tickets',
+          icon: Icons.bar_chart_rounded,
+          iconColor: Colors.orange,
+          onTap: () {
+            debugPrint('Navigating to Reports');
+            Get.to(() => const ReportsScreen(),
+                transition: Transition.rightToLeft,
+                duration: const Duration(milliseconds: 400));
+          },
+        ),
+      ],
+    );
+  }
+
+  Widget _buildAboutSection(int delay) {
+    return SettingsSection(
+      title: 'About',
+      icon: Icons.info_outline,
+      animationDelay: delay,
+      children: [
+        SettingsTile(
+          title: 'About App',
+          subtitle: 'Version & details',
+          icon: Icons.info_rounded,
+          iconColor: const Color(0xFF43CBFF),
+          onTap: () {
+            debugPrint('Navigating to About');
+            Get.to(() => const AboutAppScreen(),
+                transition: Transition.rightToLeft,
+                duration: const Duration(milliseconds: 400));
+          },
+        ),
+        SettingsTile(
+          title: 'Logout',
+          subtitle: 'Sign out of account',
+          icon: Icons.logout_rounded,
+          isDanger: true,
+          onTap: _confirmLogout,
+        ),
+      ],
+    );
   }
 
   /// 🔐 Logout confirmation and logic
   void _confirmLogout() {
-    Get.defaultDialog(
-      title: "Logout",
-      middleText: "Are you sure you want to log out?",
-      textCancel: "Cancel",
-      textConfirm: "Logout",
-      confirmTextColor: Colors.white,
-      buttonColor: const Color(0xFF6D5DF6),
-      onConfirm: () async {
-        Get.back(); // close dialog
-        try {
-          await _auth.logout();
-
-          // Small fade-out feedback
-          Get.snackbar(
-            "Logged out",
-            "You have been logged out successfully.",
-            snackPosition: SnackPosition.BOTTOM,
-            backgroundColor: Colors.black.withOpacity(0.8),
-            colorText: Colors.white,
-            duration: const Duration(seconds: 2),
-          );
-
-          // Short delay before redirect (smooth UX)
-          await Future.delayed(const Duration(milliseconds: 800));
-
-          // Redirect to login
-          Get.offAll(() => const LoginScreen(),
-              transition: Transition.fadeIn,
-              duration: const Duration(milliseconds: 500));
-        } catch (e) {
-          Get.snackbar(
-            "Error",
-            "Failed to logout: $e",
-            snackPosition: SnackPosition.BOTTOM,
-            backgroundColor: Colors.redAccent,
-            colorText: Colors.white,
-          );
-        }
-      },
-    );
-  }
-}
-
-/// A single settings card widget with ripple + subtle tap animation.
-class SettingsCard extends StatefulWidget {
-  final String title;
-  final String subtitle;
-  final IconData icon;
-  final List<Color> colors;
-  final int delay;
-  final VoidCallback onTap;
-
-  const SettingsCard({
-    super.key,
-    required this.title,
-    required this.subtitle,
-    required this.icon,
-    required this.colors,
-    required this.delay,
-    required this.onTap,
-  });
-
-  @override
-  State<SettingsCard> createState() => _SettingsCardState();
-}
-
-class _SettingsCardState extends State<SettingsCard> {
-  bool _pressed = false;
-
-  @override
-  Widget build(BuildContext context) {
-    final vm.Matrix4 transform = vm.Matrix4.identity()
-      ..translate(_pressed ? -6.0 : 0.0, 0.0, 0.0)
-      ..scale(_pressed ? 0.975 : 1.0);
-
-    return AnimatedContainer(
-      duration: const Duration(milliseconds: 180),
-      curve: Curves.easeOutBack,
-      transform: transform,
-      child: Material(
-        color: Colors.transparent,
-        borderRadius: BorderRadius.circular(20),
-        child: InkWell(
-          borderRadius: BorderRadius.circular(20),
-          onTap: widget.onTap,
-          onHighlightChanged: (v) => setState(() => _pressed = v),
-          splashFactory: InkRipple.splashFactory,
-          child: Container(
-            decoration: BoxDecoration(
-              gradient: LinearGradient(
-                colors: widget.colors,
-                begin: Alignment.topLeft,
-                end: Alignment.bottomRight,
+    debugPrint('Logout tapped');
+    Get.dialog(
+      AlertDialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        title: Row(
+          children: [
+            Container(
+              padding: const EdgeInsets.all(8),
+              decoration: BoxDecoration(
+                color: Colors.red.withOpacity(0.1),
+                borderRadius: BorderRadius.circular(10),
               ),
-              borderRadius: BorderRadius.circular(20),
-              boxShadow: [
-                BoxShadow(
-                  color: widget.colors.first.withOpacity(0.2),
-                  blurRadius: _pressed ? 6 : 14,
-                  offset: const Offset(0, 6),
-                ),
-              ],
+              child: const Icon(Icons.logout_rounded, color: Colors.red, size: 22),
             ),
-            padding: const EdgeInsets.all(18),
-            child: Column(
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                Tooltip(
-                  message: widget.title,
-                  child: Icon(widget.icon, size: 36, color: Colors.white),
-                ),
-                const SizedBox(height: 14),
-                Text(
-                  widget.title,
-                  style: GoogleFonts.poppins(
-                    color: Colors.white,
-                    fontWeight: FontWeight.w600,
-                    fontSize: 15,
-                  ),
-                ),
-                const SizedBox(height: 4),
-                Text(
-                  widget.subtitle,
-                  textAlign: TextAlign.center,
-                  style: GoogleFonts.poppins(
-                    color: Colors.white.withOpacity(0.9),
-                    fontSize: 11.5,
-                    fontWeight: FontWeight.w400,
-                  ),
-                ),
-              ],
+            const SizedBox(width: 12),
+            Text(
+              'Logout',
+              style: GoogleFonts.poppins(
+                fontSize: 18,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+          ],
+        ),
+        content: Text(
+          'Are you sure you want to log out?',
+          style: GoogleFonts.poppins(fontSize: 14, color: Colors.grey.shade600),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Get.back(),
+            child: Text(
+              'Cancel',
+              style: GoogleFonts.poppins(color: Colors.grey.shade600),
             ),
           ),
-        )
-            .animate(delay: widget.delay.ms)
-            .fadeIn(duration: 500.ms)
-            .slideY(begin: 0.2, curve: Curves.easeOut),
+          ElevatedButton(
+            onPressed: () async {
+              Get.back();
+              try {
+                await _auth.logout();
+                Get.snackbar(
+                  'Logged out',
+                  'You have been logged out successfully.',
+                  snackPosition: SnackPosition.BOTTOM,
+                  backgroundColor: Colors.black.withOpacity(0.8),
+                  colorText: Colors.white,
+                  duration: const Duration(seconds: 2),
+                );
+                await Future.delayed(const Duration(milliseconds: 800));
+                Get.offAll(() => const LoginScreen(),
+                    transition: Transition.fadeIn,
+                    duration: const Duration(milliseconds: 500));
+              } catch (e) {
+                Get.snackbar(
+                  'Error',
+                  'Failed to logout: $e',
+                  snackPosition: SnackPosition.BOTTOM,
+                  backgroundColor: Colors.redAccent,
+                  colorText: Colors.white,
+                );
+              }
+            },
+            style: ElevatedButton.styleFrom(
+              backgroundColor: Colors.red,
+              foregroundColor: Colors.white,
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+            ),
+            child: Text('Logout', style: GoogleFonts.poppins(fontWeight: FontWeight.w500)),
+          ),
+        ],
       ),
     );
   }

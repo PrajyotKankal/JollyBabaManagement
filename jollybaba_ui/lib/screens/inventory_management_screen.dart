@@ -17,6 +17,9 @@ import 'package:mobile_scanner/mobile_scanner.dart';
 import '../services/inventory_service.dart';
 import '../services/auth_service.dart';
 import '../widgets/confirm_dialog.dart';
+import '../widgets/inventory_sidebar.dart';
+import '../widgets/inventory_stats_header.dart';
+import '../widgets/pill_nav_bar.dart';
 
 class InventoryManagementScreen extends StatefulWidget {
   final int? initialIndex; // allow external navigation to open specific tab (e.g., List)
@@ -947,6 +950,7 @@ class _StatusToggleChip extends StatelessWidget {
 class _ListPage extends StatelessWidget {
   final bool loading;
   final List<Map<String, dynamic>> items;
+  final List<Map<String, dynamic>> allItems; // For stats calculation
   final Map<String, dynamic> visibleIndex;
   final Future<void> Function(Map<String, dynamic> row) onSellQuick;
   final Future<void> Function(Map<String, dynamic> row) onMakeAvailable;
@@ -960,9 +964,16 @@ class _ListPage extends StatelessWidget {
   final Set<int> makeAvailableBusy;
   final String statusFilter;
   final ValueChanged<String> onStatusFilterChanged;
+  // Sort
+  final String sortField;
+  final bool sortAscending;
+  final ValueChanged<String> onSortChanged;
+  // Pull-to-refresh
+  final Future<void> Function() onRefresh;
   const _ListPage({
     required this.loading,
     required this.items,
+    required this.allItems,
     required this.visibleIndex,
     required this.onSellQuick,
     required this.onMakeAvailable,
@@ -976,6 +987,10 @@ class _ListPage extends StatelessWidget {
     required this.makeAvailableBusy,
     required this.statusFilter,
     required this.onStatusFilterChanged,
+    required this.sortField,
+    required this.sortAscending,
+    required this.onSortChanged,
+    required this.onRefresh,
   });
   @override
   Widget build(BuildContext context) {
@@ -988,10 +1003,34 @@ class _ListPage extends StatelessWidget {
 
     final hasQuery = searchCtrl.text.trim().isNotEmpty;
 
+    // Calculate stats
+    final availableCount = allItems.where((e) => (e['status'] ?? '').toString().toUpperCase() == 'AVAILABLE').length;
+    final soldCount = allItems.where((e) => (e['status'] ?? '').toString().toUpperCase() == 'SOLD').length;
+    double totalRevenue = 0;
+    double totalProfit = 0;
+    for (final e in allItems) {
+      if ((e['status'] ?? '').toString().toUpperCase() == 'SOLD') {
+        final sell = (e['sell_amount'] is num) ? (e['sell_amount'] as num).toDouble() : double.tryParse(e['sell_amount']?.toString() ?? '') ?? 0;
+        final purchase = (e['purchase_amount'] is num) ? (e['purchase_amount'] as num).toDouble() : double.tryParse(e['purchase_amount']?.toString() ?? '') ?? 0;
+        totalRevenue += sell;
+        totalProfit += (sell - purchase);
+      }
+    }
+    
     return _PageWrapper(
       title: 'Inventory List',
       child: Column(
         children: [
+          // Stats header (desktop only)
+          if (MediaQuery.of(context).size.width >= 900 && !isTechnician)
+            InventoryStatsHeader(
+              totalItems: allItems.length,
+              availableCount: availableCount,
+              soldCount: soldCount,
+              totalRevenue: totalRevenue,
+              totalProfit: totalProfit,
+              showFinancials: !isTechnician,
+            ),
           Padding(
             padding: const EdgeInsets.only(bottom: 12),
             child: Row(
@@ -1043,6 +1082,32 @@ class _ListPage extends StatelessWidget {
                 contentPadding: const EdgeInsets.symmetric(vertical: 12, horizontal: 12),
                 border: OutlineInputBorder(borderRadius: BorderRadius.circular(10), borderSide: BorderSide.none),
               ),
+            ),
+          ),
+          // Sort chips row
+          Padding(
+            padding: const EdgeInsets.only(bottom: 12),
+            child: Row(
+              children: [
+                Text('Sort by:', style: GoogleFonts.poppins(fontSize: 12, fontWeight: FontWeight.w500, color: Colors.grey.shade600)),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: SingleChildScrollView(
+                    scrollDirection: Axis.horizontal,
+                    child: Row(
+                      children: [
+                        _buildSortChip('SR #', 'sr_no'),
+                        const SizedBox(width: 6),
+                        _buildSortChip('Model', 'model'),
+                        const SizedBox(width: 6),
+                        _buildSortChip('Date', 'date'),
+                        const SizedBox(width: 6),
+                        _buildSortChip('Status', 'status'),
+                      ],
+                    ),
+                  ),
+                ),
+              ],
             ),
           ),
           if (items.isEmpty)
@@ -1100,6 +1165,8 @@ class _ListPage extends StatelessWidget {
                       child: InkWell(
                         borderRadius: BorderRadius.circular(14),
                         onTap: () => onOpenInfo(r),
+                        hoverColor: const Color(0xFF6D5DF6).withOpacity(0.04),
+                        splashColor: const Color(0xFF6D5DF6).withOpacity(0.08),
                         child: Container(
                           decoration: BoxDecoration(
                             color: Colors.white,
@@ -1202,6 +1269,44 @@ class _ListPage extends StatelessWidget {
                 ),
     );
   }
+  
+  Widget _buildSortChip(String label, String field) {
+    final isSelected = sortField == field;
+    return GestureDetector(
+      onTap: () => onSortChanged(field),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+        decoration: BoxDecoration(
+          color: isSelected ? const Color(0xFF6D5DF6).withOpacity(0.1) : Colors.grey.shade100,
+          borderRadius: BorderRadius.circular(8),
+          border: Border.all(
+            color: isSelected ? const Color(0xFF6D5DF6).withOpacity(0.3) : Colors.grey.shade300,
+          ),
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text(
+              label,
+              style: GoogleFonts.poppins(
+                fontSize: 11,
+                fontWeight: isSelected ? FontWeight.w600 : FontWeight.w500,
+                color: isSelected ? const Color(0xFF6D5DF6) : Colors.grey.shade700,
+              ),
+            ),
+            if (isSelected) ...[
+              const SizedBox(width: 4),
+              Icon(
+                sortAscending ? Icons.arrow_upward_rounded : Icons.arrow_downward_rounded,
+                size: 12,
+                color: const Color(0xFF6D5DF6),
+              ),
+            ],
+          ],
+        ),
+      ),
+    );
+  }
 }
 
 class _AddStockPage extends StatelessWidget {
@@ -1254,16 +1359,35 @@ class _AddStockPage extends StatelessWidget {
               Expanded(child: _field('Model Name', modelCtrl, validator: (v) => (v == null || v.isEmpty) ? 'Required' : null, onTap: onDismissVendorSuggestions)),
               const SizedBox(width: 10),
               Expanded(
-                child: _field(
-                  'IMEI',
-                  imeiCtrl,
-                  onTap: onDismissVendorSuggestions,
-                  validator: (v) => (v == null || v.isEmpty) ? 'Required' : null,
-                  suffix: IconButton(
-                    icon: const Icon(Icons.camera_alt_outlined),
-                    tooltip: 'Scan IMEI',
-                    onPressed: onScanImei,
-                  ),
+                child: Builder(
+                  builder: (context) {
+                    // Live IMEI validation
+                    final imei = imeiCtrl.text.replaceAll(RegExp(r'\D'), '');
+                    final isValid = imei.length == 15;
+                    final hasContent = imei.isNotEmpty;
+                    return _field(
+                      'IMEI',
+                      imeiCtrl,
+                      onTap: onDismissVendorSuggestions,
+                      validator: (v) => (v == null || v.isEmpty) ? 'Required' : null,
+                      suffix: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          if (hasContent)
+                            Icon(
+                              isValid ? Icons.check_circle_rounded : Icons.error_outline_rounded,
+                              color: isValid ? const Color(0xFF6D5DF6) : Colors.orange,
+                              size: 20,
+                            ),
+                          IconButton(
+                            icon: const Icon(Icons.camera_alt_outlined),
+                            tooltip: 'Scan IMEI',
+                            onPressed: onScanImei,
+                          ),
+                        ],
+                      ),
+                    );
+                  },
                 ),
               ),
             ]),
@@ -1380,6 +1504,7 @@ class _ScannerOverlayPainter extends CustomPainter {
 
 class _InventoryManagementScreenState extends State<InventoryManagementScreen> {
   int _navIndex = 1; // default to Sell tab
+  bool _sidebarCollapsed = false; // For collapsible sidebar
   bool _isTechnician = false;
   bool _sellWhatsappEnabled = false; // becomes true after successful sale
   DateTime? _sellWhatsappCooldownUntil; // cooldown timer
@@ -1414,6 +1539,9 @@ class _InventoryManagementScreenState extends State<InventoryManagementScreen> {
   final _brandFilterCtrl = TextEditingController();
   String _brandFilter = '';
   String _statusFilter = 'ALL';
+  // Sort state
+  String _sortField = 'sr_no'; // sr_no, model, date, status
+  bool _sortAscending = false; // false = newest first
 
   // Add form
   final _addFormKey = GlobalKey<FormState>();
@@ -2529,6 +2657,19 @@ class _InventoryManagementScreenState extends State<InventoryManagementScreen> {
       appBar: AppBar(
         title: const Text('Inventory Management'),
         actions: [
+          // Refresh button (mobile only, on List page)
+          if (!showRail && _navIndex == 2)
+            IconButton(
+              tooltip: 'Refresh',
+              icon: _loading 
+                  ? const SizedBox(
+                      width: 20,
+                      height: 20,
+                      child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
+                    )
+                  : const Icon(Icons.refresh_rounded),
+              onPressed: _loading ? null : _load,
+            ),
           IconButton(
             tooltip: 'Export CSV',
             icon: const Icon(Icons.download),
@@ -2542,36 +2683,25 @@ class _InventoryManagementScreenState extends State<InventoryManagementScreen> {
             },
           ),
         ],
-        leading: showRail
-            ? null
-            : Builder(
-                builder: (ctx) => IconButton(
-                  icon: const Icon(Icons.menu_rounded),
-                  onPressed: () => Scaffold.of(ctx).openDrawer(),
-                ),
-              ),
+        leading: IconButton(
+          icon: const Icon(Icons.arrow_back_rounded),
+          tooltip: 'Back',
+          onPressed: () => Get.back(),
+        ),
       ),
       body: Row(
         children: [
-          if (showRail) ...[
-            NavigationRail(
-              selectedIndex: _navIndex - 1,
-              onDestinationSelected: (i) {
-                final mappedIndex = i + 1;
-                if (_navIndex == 1 && mappedIndex != 1) _resetSellForm();
-                setState(() => _navIndex = mappedIndex);
+          if (showRail)
+            InventorySidebar(
+              selectedIndex: _navIndex,
+              onItemSelected: (index) {
+                if (_navIndex == 1 && index != 1) _resetSellForm();
+                setState(() => _navIndex = index);
               },
-              labelType: NavigationRailLabelType.all,
-              destinations: [
-                const NavigationRailDestination(icon: Icon(Icons.sell_outlined), selectedIcon: Icon(Icons.sell_rounded), label: Text('Sell')),
-                const NavigationRailDestination(icon: Icon(Icons.table_rows_outlined), selectedIcon: Icon(Icons.table_rows_rounded), label: Text('List')),
-                const NavigationRailDestination(icon: Icon(Icons.add_box_outlined), selectedIcon: Icon(Icons.add_box_rounded), label: Text('Add Stock')),
-                if (!_isTechnician)
-                  const NavigationRailDestination(icon: Icon(Icons.insights_outlined), selectedIcon: Icon(Icons.insights), label: Text('Reports')),
-              ],
+              showReports: !_isTechnician,
+              isCollapsed: _sidebarCollapsed,
+              onToggleCollapse: () => setState(() => _sidebarCollapsed = !_sidebarCollapsed),
             ),
-            const VerticalDivider(width: 1),
-          ],
           Expanded(
             child: AnimatedSwitcher(
               duration: const Duration(milliseconds: 250),
@@ -2580,8 +2710,25 @@ class _InventoryManagementScreenState extends State<InventoryManagementScreen> {
           ),
         ],
       ),
+      // Premium pill navigation bar
+      bottomNavigationBar: showRail ? null : PillNavBar(
+        selectedIndex: _navIndex - 1, // Convert 1-based to 0-based index
+        onItemSelected: (index) {
+          final newIndex = index + 1; // Convert back to 1-based
+          if (_navIndex == 1 && newIndex != 1) _resetSellForm();
+          setState(() => _navIndex = newIndex);
+        },
+        items: [
+          const PillNavItem(icon: Icons.sell_rounded, label: 'Sell'),
+          const PillNavItem(icon: Icons.table_rows_rounded, label: 'List'),
+          const PillNavItem(icon: Icons.add_box_rounded, label: 'Add'),
+          if (!_isTechnician)
+            const PillNavItem(icon: Icons.insights_rounded, label: 'Reports'),
+        ],
+      ),
     );
   }
+
 
   Future<void> _showItemInfo(Map<String, dynamic> row) async {
     await showDialog(
@@ -2928,9 +3075,36 @@ class _InventoryManagementScreenState extends State<InventoryManagementScreen> {
                 String s(dynamic v) => (v ?? '').toString().toLowerCase();
                 return s(e['model']).contains(q) || s(e['imei']).contains(q) || s(e['variant_gb_color']).contains(q) || s(e['customer_name']).contains(q);
               }).toList();
+        
+        // Apply sorting
+        final sorted = List<Map<String, dynamic>>.from(filtered);
+        sorted.sort((a, b) {
+          dynamic aVal, bVal;
+          switch (_sortField) {
+            case 'model':
+              aVal = (a['model'] ?? '').toString().toLowerCase();
+              bVal = (b['model'] ?? '').toString().toLowerCase();
+              break;
+            case 'date':
+              aVal = a['date']?.toString() ?? '';
+              bVal = b['date']?.toString() ?? '';
+              break;
+            case 'status':
+              aVal = (a['status'] ?? '').toString();
+              bVal = (b['status'] ?? '').toString();
+              break;
+            default: // sr_no
+              aVal = a['sr_no'] is int ? a['sr_no'] : int.tryParse(a['sr_no']?.toString() ?? '0') ?? 0;
+              bVal = b['sr_no'] is int ? b['sr_no'] : int.tryParse(b['sr_no']?.toString() ?? '0') ?? 0;
+          }
+          final cmp = Comparable.compare(aVal as Comparable, bVal as Comparable);
+          return _sortAscending ? cmp : -cmp;
+        });
+        
         return _ListPage(
           loading: _loading,
-          items: filtered,
+          items: sorted,
+          allItems: _items,
           visibleIndex: _visibleIndex,
           onSellQuick: (row) => _handleQuickSell(row),
           onMakeAvailable: (row) => _handleMakeAvailable(row),
@@ -2944,6 +3118,19 @@ class _InventoryManagementScreenState extends State<InventoryManagementScreen> {
           makeAvailableBusy: _makeAvailableBusy,
           statusFilter: _statusFilter,
           onStatusFilterChanged: (value) => setState(() => _statusFilter = value),
+          sortField: _sortField,
+          sortAscending: _sortAscending,
+          onSortChanged: (field) {
+            setState(() {
+              if (_sortField == field) {
+                _sortAscending = !_sortAscending;
+              } else {
+                _sortField = field;
+                _sortAscending = true;
+              }
+            });
+          },
+          onRefresh: _load,
         );
       case 3:
         return _AddStockPage(
@@ -3011,39 +3198,196 @@ class _InventoryManagementScreenState extends State<InventoryManagementScreen> {
 
   Drawer _buildDrawer(BuildContext context) {
     return Drawer(
-      shape: const RoundedRectangleBorder(borderRadius: BorderRadius.only(topRight: Radius.circular(20), bottomRight: Radius.circular(20))),
-      child: SafeArea(
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            const ListTile(leading: Icon(Icons.account_circle_rounded, size: 40), title: Text('Inventory'), subtitle: Text('Quick navigation')),
-            const Divider(),
-            _drawerItem(Icons.sell_rounded, 'Sell', 1),
-            _drawerItem(Icons.table_rows_rounded, 'List', 2),
-            _drawerItem(Icons.add_box_rounded, 'Add Stock', 3),
-            if (!_isTechnician) _drawerItem(Icons.insights_rounded, 'Reports', 4),
-            const Spacer(),
-            const Divider(),
-            Padding(
-              padding: const EdgeInsets.all(12.0),
-              child: Text('v1.0.0', style: Theme.of(context).textTheme.bodySmall),
-            )
-          ],
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.only(
+          topRight: Radius.circular(24),
+          bottomRight: Radius.circular(24),
+        ),
+      ),
+      child: Container(
+        decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: const BorderRadius.only(
+            topRight: Radius.circular(24),
+            bottomRight: Radius.circular(24),
+          ),
+        ),
+        child: SafeArea(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              // Premium header with gradient
+              Container(
+                margin: const EdgeInsets.all(12),
+                padding: const EdgeInsets.all(16),
+                decoration: BoxDecoration(
+                  gradient: LinearGradient(
+                    colors: [const Color(0xFF6D5DF6), const Color(0xFF6D5DF6).withOpacity(0.8)],
+                    begin: Alignment.topLeft,
+                    end: Alignment.bottomRight,
+                  ),
+                  borderRadius: BorderRadius.circular(16),
+                  boxShadow: [
+                    BoxShadow(
+                      color: const Color(0xFF6D5DF6).withOpacity(0.3),
+                      blurRadius: 12,
+                      offset: const Offset(0, 4),
+                    ),
+                  ],
+                ),
+                child: Row(
+                  children: [
+                    Container(
+                      padding: const EdgeInsets.all(10),
+                      decoration: BoxDecoration(
+                        color: Colors.white.withOpacity(0.2),
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                      child: const Icon(Icons.inventory_2_rounded, color: Colors.white, size: 24),
+                    ),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            'Inventory',
+                            style: GoogleFonts.poppins(
+                              fontSize: 18,
+                              fontWeight: FontWeight.w700,
+                              color: Colors.white,
+                            ),
+                          ),
+                          Text(
+                            'Stock Management',
+                            style: GoogleFonts.poppins(
+                              fontSize: 12,
+                              color: Colors.white.withOpacity(0.8),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              
+              const SizedBox(height: 8),
+              
+              // Nav items
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 12),
+                child: Column(
+                  children: [
+                    _drawerItem(Icons.sell_rounded, 'Sell', 1, 'Record a sale'),
+                    const SizedBox(height: 6),
+                    _drawerItem(Icons.table_rows_rounded, 'List', 2, 'View all items'),
+                    const SizedBox(height: 6),
+                    _drawerItem(Icons.add_box_rounded, 'Add Stock', 3, 'Add new item'),
+                    if (!_isTechnician) ...[
+                      const SizedBox(height: 6),
+                      _drawerItem(Icons.insights_rounded, 'Reports', 4, 'Analytics'),
+                    ],
+                  ],
+                ),
+              ),
+              
+              const Spacer(),
+              
+              // Footer
+              Container(
+                margin: const EdgeInsets.all(12),
+                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                decoration: BoxDecoration(
+                  color: Colors.grey.shade50,
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                child: Row(
+                  children: [
+                    Icon(Icons.info_outline, size: 16, color: Colors.grey.shade500),
+                    const SizedBox(width: 8),
+                    Text(
+                      'JollyBaba v1.0.0',
+                      style: GoogleFonts.poppins(fontSize: 12, color: Colors.grey.shade600),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
         ),
       ),
     );
   }
 
-  Widget _drawerItem(IconData icon, String label, int index) {
+  Widget _drawerItem(IconData icon, String label, int index, String subtitle) {
     final selected = _navIndex == index;
-    return ListTile(
-      leading: Icon(icon, color: selected ? Theme.of(context).colorScheme.primary : null),
-      title: Text(label, style: TextStyle(fontWeight: selected ? FontWeight.w700 : FontWeight.w500)),
-      selected: selected,
-      onTap: () {
-        setState(() => _navIndex = index);
-        Navigator.of(context).pop();
-      },
+    return Material(
+      color: selected ? const Color(0xFF6D5DF6).withOpacity(0.08) : Colors.transparent,
+      borderRadius: BorderRadius.circular(12),
+      child: InkWell(
+        onTap: () {
+          setState(() => _navIndex = index);
+          Navigator.of(context).pop();
+        },
+        borderRadius: BorderRadius.circular(12),
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(12),
+            border: selected
+                ? Border.all(color: const Color(0xFF6D5DF6).withOpacity(0.3))
+                : null,
+          ),
+          child: Row(
+            children: [
+              Container(
+                padding: const EdgeInsets.all(8),
+                decoration: BoxDecoration(
+                  color: selected
+                      ? const Color(0xFF6D5DF6).withOpacity(0.12)
+                      : Colors.grey.shade100,
+                  borderRadius: BorderRadius.circular(10),
+                ),
+                child: Icon(
+                  icon,
+                  size: 20,
+                  color: selected ? const Color(0xFF6D5DF6) : Colors.grey.shade600,
+                ),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      label,
+                      style: GoogleFonts.poppins(
+                        fontSize: 14,
+                        fontWeight: selected ? FontWeight.w600 : FontWeight.w500,
+                        color: selected ? const Color(0xFF6D5DF6) : Colors.grey.shade800,
+                      ),
+                    ),
+                    Text(
+                      subtitle,
+                      style: GoogleFonts.poppins(
+                        fontSize: 11,
+                        color: Colors.grey.shade500,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              if (selected)
+                Icon(
+                  Icons.chevron_right_rounded,
+                  color: const Color(0xFF6D5DF6),
+                  size: 20,
+                ),
+            ],
+          ),
+        ),
+      ),
     );
   }
 }
@@ -3054,34 +3398,97 @@ class _PageWrapper extends StatelessWidget {
   const _PageWrapper({required this.title, required this.child});
   @override
   Widget build(BuildContext context) {
+    final width = MediaQuery.of(context).size.width;
+    final isDesktop = width >= 900;
+    
     return Padding(
-      padding: const EdgeInsets.all(12.0),
+      padding: EdgeInsets.all(isDesktop ? 24.0 : 12.0),
       child: LayoutBuilder(
         builder: (context, constraints) {
           final bottomInset = MediaQuery.of(context).viewInsets.bottom;
-          return SingleChildScrollView(
-            physics: const BouncingScrollPhysics(),
-            padding: EdgeInsets.only(bottom: bottomInset + 12),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(title, style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 16)),
-                const SizedBox(height: 10),
-                Container(
-                  width: double.infinity,
-                  padding: const EdgeInsets.all(16),
-                  decoration: BoxDecoration(
-                    color: Colors.white,
-                    borderRadius: BorderRadius.circular(12),
-                    boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.05), blurRadius: 10, offset: const Offset(0,6))],
-                  ),
-                  child: child,
+          return Center(
+            child: ConstrainedBox(
+              constraints: BoxConstraints(maxWidth: isDesktop ? 1000 : double.infinity),
+              child: SingleChildScrollView(
+                physics: const BouncingScrollPhysics(),
+                padding: EdgeInsets.only(bottom: bottomInset + 12),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    // Premium header
+                    Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                      decoration: BoxDecoration(
+                        gradient: LinearGradient(
+                          colors: [
+                            const Color(0xFF6D5DF6).withOpacity(0.08),
+                            const Color(0xFF6D5DF6).withOpacity(0.02),
+                          ],
+                        ),
+                        borderRadius: BorderRadius.circular(12),
+                        border: Border.all(color: const Color(0xFF6D5DF6).withOpacity(0.1)),
+                      ),
+                      child: Row(
+                        children: [
+                          Container(
+                            padding: const EdgeInsets.all(8),
+                            decoration: BoxDecoration(
+                              color: const Color(0xFF6D5DF6).withOpacity(0.1),
+                              borderRadius: BorderRadius.circular(8),
+                            ),
+                            child: Icon(
+                              _getIconForTitle(title),
+                              color: const Color(0xFF6D5DF6),
+                              size: 18,
+                            ),
+                          ),
+                          const SizedBox(width: 12),
+                          Text(
+                            title, 
+                            style: GoogleFonts.poppins(
+                              fontWeight: FontWeight.w600, 
+                              fontSize: isDesktop ? 18 : 16,
+                              color: const Color(0xFF1E2343),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                    const SizedBox(height: 16),
+                    Container(
+                      width: double.infinity,
+                      padding: EdgeInsets.all(isDesktop ? 24 : 16),
+                      decoration: BoxDecoration(
+                        color: Colors.white,
+                        borderRadius: BorderRadius.circular(16),
+                        border: Border.all(color: Colors.grey.shade200),
+                        boxShadow: [
+                          BoxShadow(
+                            color: Colors.black.withOpacity(0.04), 
+                            blurRadius: 12, 
+                            offset: const Offset(0, 6),
+                          ),
+                        ],
+                      ),
+                      child: child,
+                    ),
+                  ],
                 ),
-              ],
+              ),
             ),
           );
         },
       ),
     );
+  }
+  
+  IconData _getIconForTitle(String title) {
+    switch (title.toLowerCase()) {
+      case 'sell': return Icons.sell_rounded;
+      case 'inventory list': return Icons.table_rows_rounded;
+      case 'add new mobile': return Icons.add_box_rounded;
+      case 'reports': return Icons.insights_rounded;
+      default: return Icons.settings;
+    }
   }
 }

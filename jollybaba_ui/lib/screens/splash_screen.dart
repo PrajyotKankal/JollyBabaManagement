@@ -61,7 +61,8 @@ class _SplashScreenState extends State<SplashScreen>
         _navigateTo(const TechnicianDashboardScreen());
       }
     } catch (e) {
-      await _auth.logout();
+      // If something fails (network, 401, etc.), go to Login but keep stored session
+      // so the user is not force-logged-out from storage.
       _navigateTo(const LoginScreen());
     }
   }

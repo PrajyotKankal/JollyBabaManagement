@@ -1,14 +1,29 @@
 // lib/screens/widgets/upload_photo_dialog.dart
 import 'dart:io';
 import 'dart:ui';
+import 'dart:typed_data';
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
+import 'package:image_picker/image_picker.dart';
+
+/// Result class that works for both web and mobile
+class PhotoResult {
+  final File? file;           // For mobile
+  final Uint8List? bytes;     // For web
+  final String? fileName;     // Original file name
+  
+  PhotoResult({this.file, this.bytes, this.fileName});
+  
+  bool get hasData => file != null || (bytes != null && bytes!.isNotEmpty);
+}
 
 /// UploadPhotoDialog (single-photo)
-/// - Returns File? via Navigator.pop(context, file) or null if cancelled.
+/// - Works on both web (mobile browsers) and native mobile
+/// - Returns PhotoResult via Navigator.pop(context, result) or null if cancelled.
 class UploadPhotoDialog extends StatefulWidget {
   final File? initialPhoto;
-  final Future<File?> Function() onTakePhoto;
+  final Future<File?> Function()? onTakePhoto;  // Legacy callback (mobile only)
   final String titleText;
   final String placeholderText;
   final String takeButtonText;
@@ -17,7 +32,7 @@ class UploadPhotoDialog extends StatefulWidget {
   const UploadPhotoDialog({
     super.key,
     required this.initialPhoto,
-    required this.onTakePhoto,
+    this.onTakePhoto,  // Now optional - we handle internally for web
     this.titleText = 'Upload Delivery Photo',
     this.placeholderText = 'Capture delivery proof photo',
     this.takeButtonText = 'Take Photo',
@@ -29,30 +44,61 @@ class UploadPhotoDialog extends StatefulWidget {
 }
 
 class _UploadPhotoDialogState extends State<UploadPhotoDialog> {
-  File? _photo;
+  File? _photoFile;        // For mobile
+  Uint8List? _photoBytes;  // For web
+  String? _fileName;
   bool _isPicking = false;
+  final ImagePicker _picker = ImagePicker();
 
   @override
   void initState() {
     super.initState();
-    _photo = widget.initialPhoto;
+    _photoFile = widget.initialPhoto;
   }
 
+  /// Universal photo picker - works on web and mobile
   Future<void> _handleTakePhoto() async {
     if (_isPicking) return;
     setState(() => _isPicking = true);
 
     try {
-      final file = await widget.onTakePhoto();
-      if (!mounted) return;
-      if (file != null) {
-        setState(() => _photo = file);
+      // Use ImagePicker - it has web support built-in
+      final XFile? pickedFile = await _picker.pickImage(
+        source: ImageSource.camera,
+        preferredCameraDevice: CameraDevice.rear,
+        imageQuality: 80,
+      );
+      
+      if (pickedFile == null) {
+        setState(() => _isPicking = false);
+        return;
+      }
+
+      if (kIsWeb) {
+        // On web, read as bytes
+        final bytes = await pickedFile.readAsBytes();
+        if (!mounted) return;
+        setState(() {
+          _photoBytes = bytes;
+          _fileName = pickedFile.name;
+          _photoFile = null;  // Clear file reference
+        });
+      } else {
+        // On mobile, use the file path
+        if (!mounted) return;
+        setState(() {
+          _photoFile = File(pickedFile.path);
+          _photoBytes = null;  // Clear bytes
+        });
       }
     } catch (e, st) {
       debugPrint('Photo pick error: $e\n$st');
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Failed to pick photo. Please try again.')),
+          SnackBar(
+            content: Text('Failed to capture photo. Please try again.\n${e.toString().substring(0, 100.clamp(0, e.toString().length))}'),
+            backgroundColor: Colors.redAccent,
+          ),
         );
       }
     } finally {
@@ -60,51 +106,109 @@ class _UploadPhotoDialogState extends State<UploadPhotoDialog> {
     }
   }
 
-  Widget _photoArea() {
-    if (_photo == null) {
-      return Container(
-        color: const Color.fromRGBO(255, 255, 255, 0.06),
-        child: Center(
-          child: Text(
-            widget.placeholderText,
-            style: GoogleFonts.poppins(
-              color: Colors.white70,
-              fontSize: 13,
-            ),
-          ),
-        ),
-      );
-    }
+  /// Pick from gallery (good fallback for web)
+  Future<void> _handlePickFromGallery() async {
+    if (_isPicking) return;
+    setState(() => _isPicking = true);
 
-    // defensive: show placeholder if file doesn't exist or cannot be read
     try {
-      if (!_photo!.existsSync()) {
-        return Container(
-          color: const Color.fromRGBO(255, 255, 255, 0.06),
-          child: Center(
-            child: Text('Photo unavailable', style: GoogleFonts.poppins(color: Colors.white70)),
-          ),
-        );
+      final XFile? pickedFile = await _picker.pickImage(
+        source: ImageSource.gallery,
+        imageQuality: 80,
+      );
+      
+      if (pickedFile == null) {
+        setState(() => _isPicking = false);
+        return;
       }
 
-      return Image.file(
-        _photo!,
-        fit: BoxFit.cover,
-        errorBuilder: (ctx, err, stack) => Container(
-          color: const Color.fromRGBO(255, 255, 255, 0.06),
-          child: Center(
-            child: Text('Cannot display photo', style: GoogleFonts.poppins(color: Colors.white70)),
-          ),
-        ),
-      );
-    } catch (_) {
+      if (kIsWeb) {
+        final bytes = await pickedFile.readAsBytes();
+        if (!mounted) return;
+        setState(() {
+          _photoBytes = bytes;
+          _fileName = pickedFile.name;
+          _photoFile = null;
+        });
+      } else {
+        if (!mounted) return;
+        setState(() {
+          _photoFile = File(pickedFile.path);
+          _photoBytes = null;
+        });
+      }
+    } catch (e, st) {
+      debugPrint('Gallery pick error: $e\n$st');
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Failed to pick photo from gallery.')),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _isPicking = false);
+    }
+  }
+
+  bool get _hasPhoto => _photoFile != null || (_photoBytes != null && _photoBytes!.isNotEmpty);
+
+  Widget _photoArea() {
+    if (!_hasPhoto) {
       return Container(
         color: const Color.fromRGBO(255, 255, 255, 0.06),
         child: Center(
-          child: Text('Cannot display photo', style: GoogleFonts.poppins(color: Colors.white70)),
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Icon(Icons.camera_alt_outlined, color: Colors.white54, size: 48),
+              const SizedBox(height: 12),
+              Text(
+                widget.placeholderText,
+                style: GoogleFonts.poppins(
+                  color: Colors.white70,
+                  fontSize: 13,
+                ),
+                textAlign: TextAlign.center,
+              ),
+            ],
+          ),
         ),
       );
     }
+
+    // Show image from bytes (web) or file (mobile)
+    if (_photoBytes != null && _photoBytes!.isNotEmpty) {
+      return Image.memory(
+        _photoBytes!,
+        fit: BoxFit.cover,
+        errorBuilder: (ctx, err, stack) => _buildErrorPlaceholder(),
+      );
+    }
+
+    if (_photoFile != null) {
+      try {
+        if (!_photoFile!.existsSync()) {
+          return _buildErrorPlaceholder();
+        }
+        return Image.file(
+          _photoFile!,
+          fit: BoxFit.cover,
+          errorBuilder: (ctx, err, stack) => _buildErrorPlaceholder(),
+        );
+      } catch (_) {
+        return _buildErrorPlaceholder();
+      }
+    }
+
+    return _buildErrorPlaceholder();
+  }
+
+  Widget _buildErrorPlaceholder() {
+    return Container(
+      color: const Color.fromRGBO(255, 255, 255, 0.06),
+      child: Center(
+        child: Text('Cannot display photo', style: GoogleFonts.poppins(color: Colors.white70)),
+      ),
+    );
   }
 
   @override
@@ -152,7 +256,7 @@ class _UploadPhotoDialogState extends State<UploadPhotoDialog> {
                 ),
                 const SizedBox(height: 12),
 
-                // --- Single Photo Slot ---
+                // --- Photo Preview ---
                 ClipRRect(
                   borderRadius: BorderRadius.circular(12),
                   child: SizedBox(
@@ -162,8 +266,9 @@ class _UploadPhotoDialogState extends State<UploadPhotoDialog> {
                   ),
                 ),
 
-                const SizedBox(height: 10),
+                const SizedBox(height: 12),
 
+                // --- Camera Button Only ---
                 ElevatedButton.icon(
                   onPressed: _isPicking ? null : _handleTakePhoto,
                   icon: _isPicking
@@ -174,11 +279,12 @@ class _UploadPhotoDialogState extends State<UploadPhotoDialog> {
                         )
                       : const Icon(Icons.camera_alt_rounded, size: 18),
                   label: Text(
-                    _photo == null ? widget.takeButtonText : 'Retake Photo',
+                    _hasPhoto ? 'Retake Photo' : widget.takeButtonText,
                     style: GoogleFonts.poppins(fontSize: 14, fontWeight: FontWeight.w600),
                   ),
                   style: ElevatedButton.styleFrom(
                     backgroundColor: Colors.white,
+                    foregroundColor: const Color(0xFF7B61FF),
                     shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
                     padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 20),
                   ),
@@ -190,7 +296,16 @@ class _UploadPhotoDialogState extends State<UploadPhotoDialog> {
                   children: [
                     Expanded(
                       child: ElevatedButton(
-                        onPressed: _photo != null ? () => Navigator.pop(context, _photo) : null,
+                        onPressed: _hasPhoto
+                            ? () {
+                                final result = PhotoResult(
+                                  file: _photoFile,
+                                  bytes: _photoBytes,
+                                  fileName: _fileName,
+                                );
+                                Navigator.pop(context, result);
+                              }
+                            : null,
                         style: ElevatedButton.styleFrom(
                           backgroundColor: Colors.white,
                           disabledBackgroundColor: const Color.fromRGBO(255, 255, 255, 0.3),
@@ -221,3 +336,4 @@ class _UploadPhotoDialogState extends State<UploadPhotoDialog> {
     );
   }
 }
+

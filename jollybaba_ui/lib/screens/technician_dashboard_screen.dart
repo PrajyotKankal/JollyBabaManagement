@@ -10,6 +10,7 @@ import 'inventory_management_screen.dart';
 
 import '../services/ticket_service.dart';
 import '../services/auth_service.dart';
+import '../utils/responsive_helper.dart';
 import 'create_ticket_screen.dart';
 import 'ticket_details_screen.dart';
 import 'login_screen.dart';
@@ -74,6 +75,7 @@ class _TechnicianDashboardScreenState extends State<TechnicianDashboardScreen>
     try {
       final token = await AuthService().getToken();
       if (token == null) {
+        // No token at all - go to login
         if (!mounted) return;
         Navigator.of(context).pushAndRemoveUntil(
           MaterialPageRoute(builder: (_) => const LoginScreen()),
@@ -82,20 +84,22 @@ class _TechnicianDashboardScreenState extends State<TechnicianDashboardScreen>
         return;
       }
 
-      // fetch current user (me) and then tickets
-      final user = await AuthService().me();
-      _me = user;
+      // Try to fetch current user (me) - if it fails, we still have the token
+      try {
+        final user = await AuthService().me();
+        _me = user;
+      } catch (e) {
+        // Network error fetching user, but we have a token - use stored user
+        if (kDebugMode) debugPrint('Could not fetch user, using stored: $e');
+        _me = await AuthService().getStoredUser();
+      }
+      
       await _loadTickets();
     } catch (e, st) {
+      // DON'T auto-logout on errors - network issues shouldn't clear session
       if (kDebugMode) debugPrint('Auth or load error: $e\n$st');
-      try {
-        await AuthService().logout();
-      } catch (_) {}
-      if (!mounted) return;
-      Navigator.of(context).pushAndRemoveUntil(
-        MaterialPageRoute(builder: (_) => const LoginScreen()),
-        (route) => false,
-      );
+      // Just load tickets anyway - user stays logged in
+      await _loadTickets();
     }
   }
 
@@ -127,18 +131,8 @@ class _TechnicianDashboardScreenState extends State<TechnicianDashboardScreen>
       if (kDebugMode) debugPrint('Technician tickets loaded: ${_tickets.length} (mineOnly=$_mineOnly, status=${fetchStatus ?? 'any'})');
     } catch (e, st) {
       if (kDebugMode) debugPrint("❌ Error fetching tickets: $e\n$st");
-
-      final errStr = e.toString().toLowerCase();
-      if (errStr.contains('401') || errStr.contains('unauthorized') || errStr.contains('session expired')) {
-        await AuthService().logout();
-        if (!mounted) return;
-        Navigator.of(context).pushAndRemoveUntil(
-          MaterialPageRoute(builder: (_) => const LoginScreen()),
-          (route) => false,
-        );
-        return;
-      }
-
+      // DON'T auto-logout on errors - network issues shouldn't clear session
+      // User stays logged in; they can retry or manually logout
       if (mounted) setState(() => _isLoading = false);
     }
   }
@@ -345,11 +339,9 @@ class _TechnicianDashboardScreenState extends State<TechnicianDashboardScreen>
   }
 
   Widget _buildTechnicianPage(BuildContext context) {
-    final size = MediaQuery.of(context).size;
-    final bool isMobile = size.width < 700;
-    final bool isTablet = size.width >= 700 && size.width < 1100;
-    final bool isDesktop = size.width >= 1100;
-    final scale = (size.width / 400).clamp(0.7, 1.1);
+    final deviceType = ResponsiveHelper.getDeviceType(context);
+    final isPortrait = ResponsiveHelper.isPortrait(context);
+    final scale = ResponsiveHelper.getResponsiveFontSize(context, 14) / 14;
 
     final query = _searchController.text.toLowerCase();
     final filteredTickets = _tickets.where((t) {
@@ -367,11 +359,11 @@ class _TechnicianDashboardScreenState extends State<TechnicianDashboardScreen>
 
     return LayoutBuilder(
       builder: (context, constraints) {
-        final horizontalPadding = constraints.maxWidth > 1200
-            ? constraints.maxWidth * 0.12
-            : constraints.maxWidth > 700
-                ? constraints.maxWidth * 0.06
-                : 18.0;
+        final horizontalPadding = deviceType == DeviceType.mobile
+            ? 16.0
+            : deviceType == DeviceType.tablet
+                ? 24.0
+                : 32.0;
 
         final safeBottom = MediaQuery.of(context).viewPadding.bottom;
         final double bottomReserve = safeBottom + _navBottomMargin + (_fabSize * 0.9);
@@ -384,38 +376,47 @@ class _TechnicianDashboardScreenState extends State<TechnicianDashboardScreen>
               Row(
                 mainAxisAlignment: MainAxisAlignment.spaceBetween,
                 children: [
-                  Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                    Text(
-                      "Welcome,",
-                      style: GoogleFonts.poppins(fontSize: 12 * scale, color: Colors.black54),
-                    ),
-                    const SizedBox(height: 2),
-                    Text(
-                      _me?['name'] ?? 'Technician',
-                      style: GoogleFonts.poppins(
-                        fontSize: isMobile ? 18 : 20,
-                        fontWeight: FontWeight.w700,
-                        color: const Color(0xFF2A2E45),
+                  Expanded(
+                    child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                      Text(
+                        "Welcome,",
+                        style: GoogleFonts.poppins(fontSize: 12 * scale, color: Colors.black54),
                       ),
-                    ).animate().fadeIn(duration: 300.ms),
-                  ]),
+                      const SizedBox(height: 2),
+                      Text(
+                        _me?['name'] ?? 'Technician',
+                        style: GoogleFonts.poppins(
+                          fontSize: deviceType == DeviceType.mobile ? 18 : 22,
+                          fontWeight: FontWeight.w700,
+                          color: const Color(0xFF2A2E45),
+                        ),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                      ).animate().fadeIn(duration: 300.ms),
+                    ]),
+                  ),
+                  const SizedBox(width: 12),
                   // professional avatar + logout dropdown
                   _buildAvatarMenu(),
                 ],
               ),
-              const SizedBox(height: 12),
+              const SizedBox(height: 16),
 
               // Search bar
               SizedBox(
                 height: 44,
                 child: Center(
                   child: ConstrainedBox(
-                    constraints: const BoxConstraints(maxWidth: 420),
+                    constraints: BoxConstraints(
+                      maxWidth: deviceType == DeviceType.desktop ? 500 : 420,
+                    ),
                     child: TextField(
                       controller: _searchController,
                       onChanged: (_) => setState(() {}),
                       decoration: InputDecoration(
-                        hintText: "Search by name, mobile or model",
+                        hintText: deviceType == DeviceType.mobile 
+                            ? "Search..." 
+                            : "Search by name, mobile or model",
                         hintStyle: GoogleFonts.poppins(color: Colors.grey[500], fontSize: 13 * scale),
                         prefixIcon: const Icon(Icons.search, color: Colors.black54, size: 18),
                         suffixIcon: _searchController.text.isNotEmpty
@@ -439,7 +440,7 @@ class _TechnicianDashboardScreenState extends State<TechnicianDashboardScreen>
                   ),
                 ),
               ),
-              const SizedBox(height: 12),
+              const SizedBox(height: 14),
 
               // Status chips
               SizedBox(
@@ -495,7 +496,7 @@ class _TechnicianDashboardScreenState extends State<TechnicianDashboardScreen>
               ),
               const SizedBox(height: 14),
 
-              // Tickets list
+              // Tickets list (vertical, similar to admin list)
               Expanded(
                 child: Stack(
                   children: [
@@ -503,65 +504,95 @@ class _TechnicianDashboardScreenState extends State<TechnicianDashboardScreen>
                         ? const Center(child: CircularProgressIndicator())
                         : RefreshIndicator(
                             onRefresh: _loadTickets,
-                            child: GridView.builder(
-                              physics: const BouncingScrollPhysics(),
-                              padding: EdgeInsets.fromLTRB(4, 4, 4, bottomReserve),
-                              gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
-                                crossAxisCount: isDesktop ? 3 : isTablet ? 2 : 1,
-                                mainAxisSpacing: 14,
-                                crossAxisSpacing: 14,
-                                childAspectRatio: isMobile ? 2.9 : 3.4,
-                              ),
-                              itemCount: filteredTickets.length,
-                              itemBuilder: (context, index) {
-                                final t = filteredTickets[index];
-                                return AnimatedContainer(
-                                  duration: const Duration(milliseconds: 220),
-                                  decoration: BoxDecoration(
-                                    color: Colors.white,
-                                    borderRadius: BorderRadius.circular(14),
-                                    boxShadow: [
-                                      BoxShadow(
-                                        color: Colors.black.withOpacity(0.04),
-                                        blurRadius: 10,
-                                        offset: const Offset(0, 6),
+                            child: filteredTickets.isEmpty
+                                ? ListView(
+                                    padding: EdgeInsets.fromLTRB(4, 16, 4, bottomReserve),
+                                    children: [
+                                      Center(
+                                        child: Text(
+                                          'No tickets found for the selected filters.',
+                                          style: GoogleFonts.poppins(color: Colors.black54),
+                                        ),
                                       ),
                                     ],
-                                  ),
-                                  child: ListTile(
-                                    contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
-                                    title: Text(
-                                      t["customer_name"] ?? "Unknown Customer",
-                                      style: GoogleFonts.poppins(
-                                        fontWeight: FontWeight.w700,
-                                        fontSize: 15 * scale,
-                                        color: const Color(0xFF2A2E45),
-                                      ),
-                                    ),
-                                    subtitle: Column(
-                                      crossAxisAlignment: CrossAxisAlignment.start,
-                                      children: [
-                                        const SizedBox(height: 8),
-                                        Text("Device: ${t["device_model"] ?? "-"}",
-                                            style: GoogleFonts.poppins(fontSize: 13 * scale)),
-                                        const SizedBox(height: 4),
-                                        Text("Mobile: ${t["mobile_number"] ?? "-"}",
-                                            style: GoogleFonts.poppins(fontSize: 13 * scale)),
-                                      ],
-                                    ),
-                                    trailing: _gradientStatusPill(t["status"]?.toString()),
-                                    onTap: () async {
-                                      await Get.to(() => TicketDetailsScreen(ticket: t),
-                                          transition: Transition.fadeIn, duration: const Duration(milliseconds: 300));
-                                      await _loadTickets();
+                                  )
+                                : ListView.builder(
+                                    physics: const BouncingScrollPhysics(),
+                                    padding: EdgeInsets.fromLTRB(4, 4, 4, bottomReserve),
+                                    itemCount: filteredTickets.length,
+                                    itemBuilder: (context, index) {
+                                      final t = filteredTickets[index];
+                                      return Container(
+                                        margin: const EdgeInsets.only(bottom: 12),
+                                        decoration: BoxDecoration(
+                                          color: Colors.white,
+                                          borderRadius: BorderRadius.circular(16),
+                                          boxShadow: [
+                                            BoxShadow(
+                                              color: Colors.black.withOpacity(0.04),
+                                              blurRadius: 10,
+                                              offset: const Offset(0, 6),
+                                            ),
+                                          ],
+                                          border: Border.all(
+                                            color: const Color(0xFF6D5DF6).withOpacity(0.06),
+                                          ),
+                                        ),
+                                        child: ListTile(
+                                          contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+                                          title: Text(
+                                            t["customer_name"] ?? "Unknown Customer",
+                                            style: GoogleFonts.poppins(
+                                              fontWeight: FontWeight.w700,
+                                              fontSize: 15 * scale,
+                                              color: const Color(0xFF2A2E45),
+                                            ),
+                                            overflow: TextOverflow.ellipsis,
+                                          ),
+                                          subtitle: Column(
+                                            crossAxisAlignment: CrossAxisAlignment.start,
+                                            children: [
+                                              const SizedBox(height: 4),
+                                              Text(
+                                                t["device_model"] ?? "Unknown Device",
+                                                style: GoogleFonts.poppins(
+                                                  fontSize: 13 * scale,
+                                                  color: Colors.black54,
+                                                ),
+                                                overflow: TextOverflow.ellipsis,
+                                              ),
+                                              const SizedBox(height: 6),
+                                              Row(
+                                                children: [
+                                                  const Icon(Icons.phone, size: 14, color: Colors.grey),
+                                                  const SizedBox(width: 4),
+                                                  Text(
+                                                    t["mobile_number"] ?? "-",
+                                                    style: GoogleFonts.poppins(
+                                                      fontSize: 12 * scale,
+                                                      color: Colors.black45,
+                                                    ),
+                                                  ),
+                                                ],
+                                              ),
+                                            ],
+                                          ),
+                                          trailing: _gradientStatusPill(t["status"]?.toString()),
+                                          onTap: () async {
+                                            await Get.to(
+                                              () => TicketDetailsScreen(ticket: t),
+                                              transition: Transition.fadeIn,
+                                              duration: const Duration(milliseconds: 300),
+                                            );
+                                            await _loadTickets();
+                                          },
+                                        ),
+                                      )
+                                          .animate(delay: (index * 80).ms)
+                                          .fadeIn(duration: 360.ms)
+                                          .slideY(begin: 0.14, curve: Curves.easeOut);
                                     },
                                   ),
-                                )
-                                    .animate(delay: (index * 80).ms)
-                                    .fadeIn(duration: 360.ms)
-                                    .slideY(begin: 0.14, curve: Curves.easeOut);
-                              },
-                            ),
                           ),
                   ],
                 ),
@@ -571,6 +602,21 @@ class _TechnicianDashboardScreenState extends State<TechnicianDashboardScreen>
         );
       },
     );
+  }
+
+  void _onStatusSelected(String status) {
+    setState(() {
+      _selectedStatus = status;
+    });
+    _loadTickets();
+  }
+
+  String _toTitleCase(String text) {
+    if (text.isEmpty) return text;
+    return text.split(' ').map((word) {
+      if (word.isEmpty) return word;
+      return '${word[0].toUpperCase()}${word.substring(1).toLowerCase()}';
+    }).join(' ');
   }
 
   Widget _gradientStatusPill(String? status) {
@@ -605,14 +651,5 @@ class _TechnicianDashboardScreenState extends State<TechnicianDashboardScreen>
         ),
       ),
     );
-  }
-
-  String _toTitleCase(String s) {
-    if (s.isEmpty) return s;
-    final parts = s.split(RegExp(r'[\s_-]+'));
-    return parts.map((p) {
-      final low = p.toLowerCase();
-      return low.isEmpty ? '' : '${low[0].toUpperCase()}${low.substring(1)}';
-    }).join(' ');
   }
 }

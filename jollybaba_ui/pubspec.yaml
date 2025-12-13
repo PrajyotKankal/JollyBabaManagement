@@ -43,7 +43,7 @@ dependencies:
   image_picker: ^1.0.7
   flutter_image_compress: ^2.1.0
   photo_view: ^0.15.0
-  mobile_scanner: ^3.5.5
+  mobile_scanner: ^4.0.1
 
   # Icons
   font_awesome_flutter: ^10.7.0
@@ -51,6 +51,7 @@ dependencies:
   # URL launching & sharing
   url_launcher: ^6.3.0
   share_plus: ^7.2.1
+  google_sign_in: ^6.2.1
 
   # PDF generation / printing
   pdf: ^3.11.0
@@ -60,6 +61,9 @@ dependencies:
   supabase_flutter: ^2.10.3
   flutter_dotenv: ^6.0.0
   sign_in_with_apple: ^6.1.0
+  flutter_localizations:
+    sdk: flutter
+  url_strategy: ^0.3.0
 
 dev_dependencies:
   flutter_test:

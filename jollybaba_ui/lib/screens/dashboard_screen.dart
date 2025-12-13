@@ -8,10 +8,12 @@ import 'package:get/get.dart';
 
 import '../services/ticket_service.dart';
 import '../services/auth_service.dart';
+import '../utils/responsive_helper.dart';
 import 'create_ticket_screen.dart';
 import 'ticket_details_screen.dart';
 import 'settings_screen.dart';
 import 'login_screen.dart';
+import '../widgets/responsive_wrapper.dart';
 
 class DashboardScreen extends StatefulWidget {
   const DashboardScreen({super.key});
@@ -65,10 +67,7 @@ class _DashboardScreenState extends State<DashboardScreen>
 
     if (token == null) {
       if (!mounted) return;
-      Navigator.of(context).pushAndRemoveUntil(
-        MaterialPageRoute(builder: (_) => const LoginScreen()),
-        (route) => false,
-      );
+      Get.offAll(() => const LoginScreen());
       return;
     }
 
@@ -97,77 +96,67 @@ class _DashboardScreenState extends State<DashboardScreen>
       }
     } catch (e, st) {
       if (kDebugMode) debugPrint("❌ Error fetching tickets: $e\n$st");
-
-      final errStr = e.toString().toLowerCase();
-      if (errStr.contains('401') ||
-          errStr.contains('unauthorized') ||
-          errStr.contains('session expired')) {
-        await AuthService().logout();
-        if (!mounted) return;
-        Navigator.of(context).pushAndRemoveUntil(
-          MaterialPageRoute(builder: (_) => const LoginScreen()),
-          (route) => false,
-        );
-        return;
-      }
-
+      // DON'T auto-logout on errors - network issues shouldn't clear session
+      // User stays logged in; they can retry or manually logout
       if (mounted) setState(() => _isLoading = false);
     }
   }
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      extendBody: true,
-      backgroundColor: const Color(0xFFF8FAFF),
-      body: Stack(
-        children: [
-          SafeArea(
-            child: AnimatedSwitcher(
-              duration: const Duration(milliseconds: 300),
-              switchInCurve: Curves.easeOutCubic,
-              switchOutCurve: Curves.easeInCubic,
-              child: _selectedPage == 0
-                  ? _buildDashboardPage(context)
-                  : const SettingsScreen(showBottomNav: false),
-            ),
-          ),
-          Positioned(
-            left: 0,
-            right: 0,
-            bottom: 0,
-            child: SafeArea(
-              minimum: const EdgeInsets.only(bottom: 8),
-              child: IgnorePointer(
-                ignoring: false,
-                child: _buildPolishedNav(context),
+    return ResponsiveWrapper(
+      child: Scaffold(
+        extendBody: true,
+        backgroundColor: const Color(0xFFF8FAFF),
+        body: Stack(
+          children: [
+            SafeArea(
+              child: AnimatedSwitcher(
+                duration: const Duration(milliseconds: 300),
+                switchInCurve: Curves.easeOutCubic,
+                switchOutCurve: Curves.easeInCubic,
+                child: _selectedPage == 0
+                    ? _buildDashboardPage(context)
+                    : const SettingsScreen(showBottomNav: false),
               ),
             ),
-          ),
-        ],
+            Positioned(
+              left: 0,
+              right: 0,
+              bottom: 0,
+              child: SafeArea(
+                minimum: const EdgeInsets.only(bottom: 8),
+                child: IgnorePointer(
+                  ignoring: false,
+                  child: _buildPolishedNav(context),
+                ),
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }
 
   // ---------------- DASHBOARD PAGE ---------------- //
   Widget _buildDashboardPage(BuildContext context) {
-    final size = MediaQuery.of(context).size;
-    final bool isMobile = size.width < 700;
-    final bool isTablet = size.width >= 700 && size.width < 1100;
-    final bool isDesktop = size.width >= 1100;
+    final deviceType = ResponsiveHelper.getDeviceType(context);
+    final isPortrait = ResponsiveHelper.isPortrait(context);
 
     return LayoutBuilder(
       builder: (context, constraints) {
         final width = constraints.maxWidth;
         // Horizontal padding grows on very large screens so content stays centered
-        final horizontalPadding = width > 1400
-            ? width * 0.18
-            : width > 1000
-            ? width * 0.08
-            : 26.0;
+        final horizontalPadding = deviceType == DeviceType.mobile
+            ? 16.0
+            : deviceType == DeviceType.tablet
+                ? 24.0
+                : width > 1400
+                    ? width * 0.12
+                    : width * 0.05;
 
         // Scale factor for fonts and chips: keeps UI balanced on tablets/desktops
-        final scale = (width / 420).clamp(0.8, 1.3);
+        final scale = ResponsiveHelper.getResponsiveFontSize(context, 14) / 14;
 
         // Reserve space at bottom for nav + FAB
         final safeBottom = MediaQuery.of(context).viewPadding.bottom;
@@ -193,26 +182,21 @@ class _DashboardScreenState extends State<DashboardScreen>
 
         // Determine grid columns responsively
         int columns;
-        if (width >= 1500) {
-          columns = 4;
-        } else if (width >= 1100) {
-          columns = 3;
-        } else if (width >= 800) {
-          columns = 2;
+        if (width >= 800) {
+          columns = 2; // Max 2 columns for Web/Desktop
         } else {
           columns = 1;
         }
 
         // Keep card aspect ratio reasonable across sizes
+        final isLandscape = ResponsiveHelper.isLandscape(context);
         final double cardAspect;
         if (columns == 1) {
-          cardAspect = isMobile ? 3.0 : 3.6;
-        } else if (columns == 2) {
-          cardAspect = 3.4;
-        } else if (columns == 3) {
-          cardAspect = 3.6;
+          cardAspect = isLandscape ? 4.5 : (deviceType == DeviceType.mobile ? 3.0 : 3.6);
         } else {
-          cardAspect = 3.8;
+          // 2 columns: make them "longer" (taller) as requested
+          // Lower aspect ratio = taller card
+          cardAspect = isLandscape ? 3.5 : 2.8;
         }
 
         return Padding(
@@ -227,33 +211,35 @@ class _DashboardScreenState extends State<DashboardScreen>
                 child: Text(
                   "JollyBaba Mobiles",
                   style: GoogleFonts.poppins(
-                    fontSize: 18.0 * (isMobile ? 1.0 : 1.06),
+                    fontSize: deviceType == DeviceType.mobile ? 18.0 : 20.0,
                     fontWeight: FontWeight.w600,
                     letterSpacing: 0.4,
                     color: Colors.black87,
                   ),
                 ).animate().fadeIn(duration: 300.ms),
               ),
-              const SizedBox(height: 10),
+              const SizedBox(height: 12),
 
               // Search Bar — grows on tablet/desktop but stays compact on phone.
               SizedBox(
-                height: 48 * scale,
+                height: 44,
                 child: Center(
                   child: ConstrainedBox(
                     constraints: BoxConstraints(
-                      maxWidth: isDesktop
+                      maxWidth: deviceType == DeviceType.desktop
                           ? 620
-                          : isTablet
-                          ? 520
-                          : 420,
+                          : deviceType == DeviceType.tablet
+                              ? 520
+                              : 420,
                       minWidth: 220,
                     ),
                     child: TextField(
                       controller: _searchController,
                       onChanged: (_) => setState(() {}),
                       decoration: InputDecoration(
-                        hintText: "Search by name, mobile or model",
+                        hintText: deviceType == DeviceType.mobile
+                            ? "Search..."
+                            : "Search by name, mobile or model",
                         hintStyle: GoogleFonts.poppins(
                           color: Colors.grey[500],
                           fontSize: 13 * scale,
@@ -292,48 +278,50 @@ class _DashboardScreenState extends State<DashboardScreen>
               ),
               const SizedBox(height: 12),
 
-              // Status Chips — single-line horizontal scroll
+              // Status Chips — centered
               SizedBox(
                 height: 42 * (scale.clamp(0.9, 1.2)),
-                child: SingleChildScrollView(
-                  scrollDirection: Axis.horizontal,
-                  physics: const BouncingScrollPhysics(),
-                  padding: const EdgeInsets.symmetric(horizontal: 12),
-                  child: Row(
-                    children: [
-                      ...statuses.map((status) {
-                        final isSelected = _selectedStatus == status;
-                        final baseFont = 13.0 * scale;
-                        final horizontalPaddingChip = isDesktop ? 18.0 : 12.0;
-                        return Padding(
-                          padding: const EdgeInsets.symmetric(horizontal: 5),
-                          child: GestureDetector(
-                            onTap: () => setState(() => _selectedStatus = status),
-                            child: AnimatedContainer(
-                              duration: const Duration(milliseconds: 220),
-                              padding: EdgeInsets.symmetric(
-                                horizontal: horizontalPaddingChip,
-                                vertical: 6 * (scale * 0.9),
-                              ),
-                              decoration: BoxDecoration(
-                                color: isSelected
-                                    ? const Color(0xFF6D5DF6)
-                                    : const Color(0xFFF1F3FA),
-                                borderRadius: BorderRadius.circular(20),
-                              ),
-                              child: Text(
-                                status,
-                                style: GoogleFonts.poppins(
-                                  color: isSelected ? Colors.white : Colors.black87,
-                                  fontWeight: FontWeight.w600,
-                                  fontSize: baseFont,
+                child: Center(
+                  child: SingleChildScrollView(
+                    scrollDirection: Axis.horizontal,
+                    physics: const BouncingScrollPhysics(),
+                    child: Row(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        ...statuses.map((status) {
+                          final isSelected = _selectedStatus == status;
+                          final baseFont = 13.0 * scale;
+                          final horizontalPaddingChip = deviceType == DeviceType.desktop ? 18.0 : 12.0;
+                          return Padding(
+                            padding: const EdgeInsets.symmetric(horizontal: 5),
+                            child: GestureDetector(
+                              onTap: () => setState(() => _selectedStatus = status),
+                              child: AnimatedContainer(
+                                duration: const Duration(milliseconds: 220),
+                                padding: EdgeInsets.symmetric(
+                                  horizontal: horizontalPaddingChip,
+                                  vertical: 6 * (scale * 0.9),
+                                ),
+                                decoration: BoxDecoration(
+                                  color: isSelected
+                                      ? const Color(0xFF6D5DF6)
+                                      : const Color(0xFFF1F3FA),
+                                  borderRadius: BorderRadius.circular(20),
+                                ),
+                                child: Text(
+                                  status,
+                                  style: GoogleFonts.poppins(
+                                    color: isSelected ? Colors.white : Colors.black87,
+                                    fontWeight: FontWeight.w600,
+                                    fontSize: baseFont,
+                                  ),
                                 ),
                               ),
                             ),
-                          ),
-                        );
-                      }).toList(),
-                    ],
+                          );
+                        }).toList(),
+                      ],
+                    ),
                   ),
                 ),
               ),
@@ -398,8 +386,8 @@ class _DashboardScreenState extends State<DashboardScreen>
                                         },
                                         child: Padding(
                                           padding: EdgeInsets.symmetric(
-                                            horizontal: 14 * (scale * 1.0),
-                                            vertical: 10 * (scale * 0.9),
+                                            horizontal: 12 * (scale * 1.0),
+                                            vertical: 8 * (scale * 0.9),
                                           ),
                                           child: Row(
                                             crossAxisAlignment:
@@ -412,6 +400,7 @@ class _DashboardScreenState extends State<DashboardScreen>
                                                       CrossAxisAlignment.start,
                                                   mainAxisAlignment:
                                                       MainAxisAlignment.center,
+                                                  mainAxisSize: MainAxisSize.min,
                                                   children: [
                                                     Text(
                                                       t["customer_name"] ??
@@ -426,38 +415,44 @@ class _DashboardScreenState extends State<DashboardScreen>
                                                               0xFF2A2E45,
                                                             ),
                                                           ),
+                                                      maxLines: 1,
+                                                      overflow: TextOverflow.ellipsis,
                                                     ),
-                                                    const SizedBox(height: 8),
+                                                    SizedBox(height: 4 * (scale * 0.8)),
                                                     Text(
                                                       "Device: ${t["device_model"] ?? "-"}",
                                                       style:
                                                           GoogleFonts.poppins(
                                                             fontSize:
-                                                                13 * (scale),
+                                                                12 * (scale),
                                                           ),
+                                                      maxLines: 1,
+                                                      overflow: TextOverflow.ellipsis,
                                                     ),
-                                                    const SizedBox(height: 4),
+                                                    SizedBox(height: 2 * (scale * 0.8)),
                                                     Text(
                                                       "Mobile: ${t["mobile_number"] ?? "-"}",
                                                       style:
                                                           GoogleFonts.poppins(
                                                             fontSize:
-                                                                13 * (scale),
+                                                                11 * (scale),
                                                           ),
+                                                      maxLines: 1,
+                                                      overflow: TextOverflow.ellipsis,
                                                     ),
                                                   ],
                                                 ),
                                               ),
 
                                               // Spacer & status pill on right
-                                              const SizedBox(width: 12),
+                                              const SizedBox(width: 8),
                                               Align(
                                                 alignment:
                                                     Alignment.centerRight,
                                                 child: _gradientStatusPill(
                                                   t["status"]?.toString(),
                                                   scale: scale,
-                                                  isDesktop: isDesktop,
+                                                  isDesktop: deviceType == DeviceType.desktop,
                                                 ),
                                               ),
                                             ],

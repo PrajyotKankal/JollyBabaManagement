@@ -1,5 +1,7 @@
 // lib/screens/ticket_details_controller.dart
 import 'dart:io';
+import 'dart:typed_data';
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:get/get.dart';
 import 'package:image_picker/image_picker.dart';
@@ -24,6 +26,10 @@ const String _envApiBase = String.fromEnvironment(
 class TicketDetailsController extends GetxController {
   // -------------------- CORE STATE --------------------
   late Map<String, dynamic> ticket;
+  
+  // Loading state for assign to me action
+  final RxBool isAssigning = false.obs;
+  
   late String status; // UI-friendly: "Pending", "Delivered", etc.
   late String previousStatus;
 
@@ -33,6 +39,12 @@ class TicketDetailsController extends GetxController {
   final Rxn<File> deliveryPhoto1 = Rxn<File>();
   final Rxn<File> repairedPhoto = Rxn<File>();
   final Rxn<File> deliveryPhoto2 = Rxn<File>();
+  
+  // Web photo bytes (for cross-platform support)
+  Uint8List? repairedPhotoBytes;
+  Uint8List? deliveryPhoto2Bytes;
+  String? repairedPhotoFileName;
+  String? deliveryPhoto2FileName;
 
   // Notes
   final TextEditingController notesController = TextEditingController();
@@ -190,6 +202,105 @@ class TicketDetailsController extends GetxController {
     notesController.clear();
   }
 
+  // -------------------- SELF ASSIGNMENT --------------------
+  Future<bool> assignToMe() async {
+    if (!canAssignToMe || _currentUser == null) return false;
+
+    final confirm = await Get.dialog<bool>(
+          AlertDialog(
+            title: const Text('Assign to Me'),
+            content: const Text(
+              'Do you want to take ownership of this ticket? This will mark the ticket as In Progress.',
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Get.back(result: false),
+                child: const Text('Cancel'),
+              ),
+              ElevatedButton(
+                onPressed: () => Get.back(result: true),
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: const Color(0xFF6D5DF6),
+                  foregroundColor: Colors.white,
+                ),
+                child: const Text('Assign to Me'),
+              ),
+            ],
+          ),
+        ) ??
+        false;
+
+    if (!confirm) return false;
+
+    final rawId = ticket['id']?.toString();
+    final ticketId = rawId != null ? int.tryParse(rawId) : null;
+    if (ticketId == null) {
+      Get.snackbar(
+        'Assignment failed',
+        'Ticket is missing an identifier.',
+        snackPosition: SnackPosition.BOTTOM,
+      );
+      return false;
+    }
+
+    final currentEmail = (_currentUser!['email'] ?? '').toString().trim().toLowerCase();
+    final currentName = (_currentUser!['name'] ?? '').toString().trim();
+    final displayName = currentName.isNotEmpty ? currentName : currentEmail;
+
+    isAssigning.value = true;
+    update();
+
+    try {
+      final payload = <String, dynamic>{
+        'assigned_technician': displayName,
+        'assigned_technician_email': currentEmail,
+        'assigned_to': displayName,
+        'assigned_to_email': currentEmail,
+        'worked_by_email': currentEmail,
+        'worked_by_name': displayName,
+        'work_action': 'self_assign',
+        'work_notes': 'Ticket self-assigned by technician',
+        'worked_at': DateTime.now().toIso8601String(),
+      };
+
+      final success = await TicketService.updateTicket(ticketId, payload);
+      if (!success) {
+        throw Exception('Server rejected the assignment request');
+      }
+
+      ticket['assigned_technician'] = displayName;
+      ticket['assigned_technician_email'] = currentEmail;
+      ticket['assigned_to'] = displayName;
+      ticket['assigned_to_email'] = currentEmail;
+      assignedTechnician = displayName;
+      isAssignedTechnician = true;
+
+      update();
+
+      Get.snackbar(
+        'Assigned',
+        'You are now assigned to this ticket.',
+        snackPosition: SnackPosition.BOTTOM,
+        backgroundColor: Colors.green,
+        colorText: Colors.white,
+      );
+      return true;
+    } catch (e, st) {
+      debugPrint('assignToMe failed: $e\n$st');
+      Get.snackbar(
+        'Assignment failed',
+        'Unable to assign ticket. Please try again.',
+        snackPosition: SnackPosition.BOTTOM,
+        backgroundColor: Colors.redAccent,
+        colorText: Colors.white,
+      );
+      return false;
+    } finally {
+      isAssigning.value = false;
+      update();
+    }
+  }
+
   /// Loads user info and computes permission flags.
   /// This implementation explicitly type-checks the values returned by AuthService
   /// to avoid analyzer dead-code/nullability warnings while remaining defensive.
@@ -223,31 +334,29 @@ class TicketDetailsController extends GetxController {
 
       _currentUser = me;
 
-      final role = (me['role'] ?? '').toString().toLowerCase();
-      final email = (me['email'] ?? me['username'] ?? '')
-          .toString()
-          .toLowerCase();
+      final role = _normalizeIdentifier(me['role']);
+      final email = _currentUserEmailLower;
+      final name = _currentUserNameLower;
 
       // The assigned email on ticket may be in several fields depending on backend
-      final assignedEmailCandidates = <String>[
-        (ticket['assigned_technician_email'] ?? '').toString(),
-        (ticket['assigned_technician'] ?? '').toString(),
-        (ticket['assigned_to_email'] ?? '').toString(),
-        (ticket['assigned_to'] ?? '').toString(),
-      ];
-
-      final assignedEmail = assignedEmailCandidates
-          .firstWhere((c) => c.trim().isNotEmpty, orElse: () => '')
-          .toLowerCase();
+      final assignedEmail = _assignedEmailLower;
+      final assignedName = _assignedNameLower;
 
       isAdmin = role == 'admin' || role == 'administrator';
-      isTechnician = role == 'technician';
-      isAssignedTechnician =
-          isTechnician && email.isNotEmpty && email == assignedEmail;
+      isTechnician =
+          role == 'technician' || role == 'tech' || (role.isEmpty && !isAdmin);
+      final matchesCurrentUser = (assignedEmail.isNotEmpty && email.isNotEmpty && email == assignedEmail) ||
+          (assignedName.isNotEmpty && name.isNotEmpty && assignedName == name);
+      isAssignedTechnician = isTechnician && matchesCurrentUser;
 
       // Allow any technician to edit, but keep admin override
       canEditNotes = isAdmin || isTechnician;
       canEditStatus = isAdmin || isTechnician;
+
+      debugPrint(
+        '[TicketDetails] role=$role email=$email name=$name assignedEmail=$assignedEmail assignedName=$assignedName '
+        'isTech=$isTechnician isAssigned=$isAssignedTechnician',
+      );
     } catch (e, st) {
       debugPrint('Permission load failed: $e\n$st');
       isAdmin = false;
@@ -259,6 +368,81 @@ class TicketDetailsController extends GetxController {
   }
 
   void refreshUI() => update();
+
+  Future<bool> updateTicketDetails(
+    Map<String, dynamic> fields, {
+    String? auditNote,
+  }) async {
+    final rawId = ticket['id']?.toString();
+    final ticketId = rawId != null ? int.tryParse(rawId) : null;
+    if (ticketId == null || fields.isEmpty) {
+      Get.snackbar(
+        'Nothing to save',
+        'No editable changes detected.',
+        snackPosition: SnackPosition.BOTTOM,
+      );
+      return false;
+    }
+
+    final payload = Map<String, dynamic>.from(fields);
+    final currentEmail = (_currentUser?['email'] ?? '').toString().trim().toLowerCase();
+    final currentName = (_currentUser?['name'] ?? '').toString().trim();
+
+    payload['worked_by_email'] = currentEmail.isNotEmpty ? currentEmail : null;
+    payload['worked_by_name'] = currentName.isNotEmpty ? currentName : null;
+    payload['work_action'] = 'edit_ticket';
+    payload['work_notes'] = auditNote ?? 'Ticket details updated';
+    payload['worked_at'] = DateTime.now().toIso8601String();
+
+    isSaving.value = true;
+    update();
+
+    try {
+      final success = await TicketService.updateTicket(ticketId, payload);
+      if (!success) throw Exception('Server rejected the update request');
+
+      fields.forEach((key, value) {
+        ticket[key] = value;
+      });
+
+      ticket['last_worked_by_email'] = payload['worked_by_email'];
+      ticket['last_worked_by_name'] = payload['worked_by_name'];
+      ticket['last_worked_at'] = payload['worked_at'];
+
+      if (fields.containsKey('assigned_technician') ||
+          fields.containsKey('assigned_to') ||
+          fields.containsKey('assigned_technician_email') ||
+          fields.containsKey('assigned_to_email')) {
+        assignedTechnician = (ticket['assigned_technician'] ??
+                ticket['assigned_to'] ??
+                '')
+            .toString();
+      }
+
+      _normalizePhotoPaths();
+      update();
+
+      Get.snackbar(
+        'Ticket updated',
+        'Changes saved successfully.',
+        snackPosition: SnackPosition.BOTTOM,
+        backgroundColor: Colors.green.withOpacity(0.1),
+      );
+      return true;
+    } catch (e, st) {
+      debugPrint('updateTicketDetails error: $e\n$st');
+      Get.snackbar(
+        'Update failed',
+        'Unable to save ticket changes. Please try again.',
+        snackPosition: SnackPosition.BOTTOM,
+        backgroundColor: Colors.red.withOpacity(0.1),
+      );
+      return false;
+    } finally {
+      isSaving.value = false;
+      update();
+    }
+  }
 
   // -------------------- URL NORMALIZATION --------------------
   /// Convert server-relative paths (e.g. "/uploads/x.jpg") into absolute URLs if we have an API base.
@@ -445,25 +629,31 @@ class TicketDetailsController extends GetxController {
   }
 
   Future<bool> _showSingleUploadDialogAndSetPhoto() async {
-    final File? file = await Get.dialog<File?>(
+    final result = await Get.dialog<PhotoResult?>(
       UploadPhotoDialog(
         initialPhoto: deliveryPhoto2.value,
-        onTakePhoto: () => _pickPhoto(source: ImageSource.camera),
       ),
       barrierDismissible: true,
     );
 
-    if (file == null) return false;
-    deliveryPhoto2.value = file;
+    if (result == null || !result.hasData) return false;
+    
+    if (kIsWeb && result.bytes != null) {
+      deliveryPhoto2Bytes = result.bytes;
+      deliveryPhoto2FileName = result.fileName;
+      deliveryPhoto2.value = null;
+    } else if (result.file != null) {
+      deliveryPhoto2.value = result.file;
+      deliveryPhoto2Bytes = null;
+    }
     update();
     return true;
   }
 
   Future<bool> _showRepairedUploadDialog() async {
-    final File? file = await Get.dialog<File?>(
+    final result = await Get.dialog<PhotoResult?>(
       UploadPhotoDialog(
         initialPhoto: repairedPhoto.value,
-        onTakePhoto: () => _pickPhoto(source: ImageSource.camera),
         titleText: 'Upload Repaired Photo',
         placeholderText: 'Capture repaired proof photo',
         takeButtonText: 'Capture Proof',
@@ -472,8 +662,16 @@ class TicketDetailsController extends GetxController {
       barrierDismissible: true,
     );
 
-    if (file == null) return false;
-    repairedPhoto.value = file;
+    if (result == null || !result.hasData) return false;
+    
+    if (kIsWeb && result.bytes != null) {
+      repairedPhotoBytes = result.bytes;
+      repairedPhotoFileName = result.fileName;
+      repairedPhoto.value = null;
+    } else if (result.file != null) {
+      repairedPhoto.value = result.file;
+      repairedPhotoBytes = null;
+    }
     update();
     return true;
   }
@@ -481,14 +679,17 @@ class TicketDetailsController extends GetxController {
   Future<bool> _ensuresRepairedPhotoUploaded() async {
     final hasRemote = (ticket['repaired_photo']?.toString().trim().isNotEmpty ?? false);
     File? local = repairedPhoto.value;
+    final hasWebBytes = repairedPhotoBytes != null && repairedPhotoBytes!.isNotEmpty;
 
-    if (local == null && !hasRemote) {
+    // If no photo and no web bytes and no remote, prompt for capture
+    if (local == null && !hasWebBytes && !hasRemote) {
       final captured = await _showRepairedUploadDialog();
       if (!captured) return false;
       local = repairedPhoto.value;
     }
 
-    if (local == null) {
+    // If still no photo data, check if we have remote already
+    if (local == null && !hasWebBytes) {
       return hasRemote;
     }
 
@@ -509,11 +710,24 @@ class TicketDetailsController extends GetxController {
               })
           .toList();
 
-      final response = await TicketService.uploadRepairedPhoto(
-        ticket['id'] as int,
-        local,
-        notes: notePayload,
-      );
+      Map<String, dynamic>? response;
+      
+      if (hasWebBytes) {
+        // Upload from bytes (web)
+        response = await TicketService.uploadRepairedPhotoFromBytes(
+          ticket['id'] as int,
+          repairedPhotoBytes!,
+          fileName: repairedPhotoFileName ?? 'repaired_photo.jpg',
+          notes: notePayload,
+        );
+      } else if (local != null) {
+        // Upload from file (mobile)
+        response = await TicketService.uploadRepairedPhoto(
+          ticket['id'] as int,
+          local,
+          notes: notePayload,
+        );
+      }
 
       Get.closeAllSnackbars();
 
@@ -532,6 +746,8 @@ class TicketDetailsController extends GetxController {
       status = _titleCase((ticket['status'] ?? status).toString());
       previousStatus = status;
       repairedPhoto.value = null;
+      repairedPhotoBytes = null;
+      repairedPhotoFileName = null;
       _loadNotesFromTicket();
       _normalizePhotoPaths();
       update();
@@ -815,6 +1031,70 @@ class TicketDetailsController extends GetxController {
   File? get photoFile1 => deliveryPhoto1.value;
   File? get repairedPhotoFile => repairedPhoto.value;
   File? get photoFile2 => deliveryPhoto2.value;
+
+  bool get canEditTicket => isAdmin || isTechnician;
+
+  bool get canAssignToMe {
+    if (!isTechnician || _currentUser == null) return false;
+
+    final email = _currentUserEmailLower;
+    final name = _currentUserNameLower;
+    if (email.isEmpty && name.isEmpty) return false;
+
+    final assignedEmail = _assignedEmailLower;
+    final assignedName = _assignedNameLower;
+
+    final matchesCurrentUser = (assignedEmail.isNotEmpty && email.isNotEmpty && assignedEmail == email) ||
+        (assignedName.isNotEmpty && name.isNotEmpty && assignedName == name);
+
+    final allowed = !matchesCurrentUser;
+    debugPrint(
+      '[TicketDetails] canAssignToMe=$allowed isTech=$isTechnician currentEmail=$email currentName=$name '
+      'assignedEmail=$assignedEmail assignedName=$assignedName',
+    );
+    return allowed;
+  }
+
+  String _normalizeIdentifier(dynamic value) {
+    if (value == null) return '';
+    final normalized = value.toString().trim().toLowerCase();
+    if (normalized.isEmpty || normalized == 'null' || normalized == 'none' || normalized == '-') {
+      return '';
+    }
+    return normalized;
+  }
+
+  String get _assignedEmailLower {
+    final candidates = [
+      ticket['assigned_technician_email'],
+      ticket['assigned_to_email'],
+    ];
+    for (final candidate in candidates) {
+      final normalized = _normalizeIdentifier(candidate);
+      if (normalized.isNotEmpty) return normalized;
+    }
+    return '';
+  }
+
+  String get _assignedNameLower {
+    final candidates = [
+      ticket['assigned_technician_name'],
+      ticket['assigned_to_name'],
+      ticket['assigned_technician'],
+      ticket['assigned_to'],
+    ];
+    for (final candidate in candidates) {
+      final normalized = _normalizeIdentifier(candidate);
+      if (normalized.isNotEmpty) return normalized;
+    }
+    return '';
+  }
+
+  String get _currentUserEmailLower =>
+      _normalizeIdentifier(_currentUser?['email'] ?? _currentUser?['username']);
+
+  String get _currentUserNameLower =>
+      _normalizeIdentifier(_currentUser?['name']);
 
   /// Returns a normalized absolute URL when possible; otherwise returns the raw string.
   /// Returns a normalized absolute URL when possible; otherwise returns the raw string.

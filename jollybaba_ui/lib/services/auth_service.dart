@@ -1,12 +1,10 @@
 // lib/services/auth_service.dart
 // AuthService: singleton wrapper around Dio + secure storage for auth.
-// - Call `await AuthService().init()` from main() before runApp() if you want token preloaded.
-// - Default base URL is set to 127.0.0.1 which works with adb reverse. Change to your LAN IP
-//   (e.g. http://192.168.x.y:5000) when testing over Wi-Fi.
 import 'dart:convert';
 import 'package:dio/dio.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 import '../config.dart';
 
@@ -15,31 +13,34 @@ class AuthService {
   static final AuthService _instance = AuthService._internal();
   factory AuthService() => _instance;
   AuthService._internal() {
-    // Keep constructor light. Call init() from main() if you need token preloaded.
     _setupDio();
   }
-
-  // ---------------- CONFIG ----------------
-  static const String _defaultBaseUrl = AppConfig.baseUrl;
-
-  final FlutterSecureStorage _secureStorage = const FlutterSecureStorage();
-  final Dio dio = Dio(BaseOptions(
-    baseUrl: _defaultBaseUrl,
-    connectTimeout: const Duration(seconds: 20), // increased to avoid spurious timeouts
-    receiveTimeout: const Duration(seconds: 20),
-    contentType: 'application/json',
-    responseType: ResponseType.json,
-  ));
 
   // ---------------- STORAGE KEYS ----------------
   static const String _keyToken = 'jb_token';
   static const String _keyUser = 'jb_user';
 
+  // ---------------- CONFIG ----------------
+  static const String _defaultBaseUrl = AppConfig.baseUrl;
+
+  // Mobile uses SecureStorage, Web uses SharedPreferences (localStorage)
+  final FlutterSecureStorage _secureStorage = const FlutterSecureStorage(
+    aOptions: AndroidOptions(encryptedSharedPreferences: true),
+    iOptions: IOSOptions(accessibility: KeychainAccessibility.first_unlock),
+  );
+  
+  final Dio dio = Dio(BaseOptions(
+    baseUrl: _defaultBaseUrl,
+    connectTimeout: const Duration(seconds: 60),
+    receiveTimeout: const Duration(seconds: 60),
+    contentType: 'application/json',
+    responseType: ResponseType.json,
+  ));
+
   // ---------------- IN-MEMORY CACHE ----------------
   String? _cachedToken;
 
   // ---------------- PUBLIC INIT ----------------
-  /// Call once at app startup (await this in main()) so token is loaded.
   Future<void> init() async {
     await _initFromStorage();
     if (_cachedToken != null && _cachedToken!.isNotEmpty) {
@@ -51,7 +52,15 @@ class AuthService {
 
   Future<void> _initFromStorage() async {
     try {
-      _cachedToken = await _secureStorage.read(key: _keyToken);
+      if (kIsWeb) {
+        // Web: Use SharedPreferences (localStorage) - more reliable on iOS Safari PWA
+        final prefs = await SharedPreferences.getInstance();
+        _cachedToken = prefs.getString(_keyToken);
+      } else {
+        // Mobile: Use SecureStorage
+        _cachedToken = await _secureStorage.read(key: _keyToken);
+      }
+      
       if (_cachedToken != null && _cachedToken!.isNotEmpty) {
         dio.options.headers['Authorization'] = 'Bearer $_cachedToken';
       }
@@ -63,7 +72,6 @@ class AuthService {
   void _setupDio() {
     dio.interceptors.clear();
 
-    // Helpful request/response logger in debug mode (DO NOT enable in production)
     if (kDebugMode) {
       dio.interceptors.add(
         LogInterceptor(
@@ -73,8 +81,6 @@ class AuthService {
           responseHeader: true,
           responseBody: true,
           error: true,
-          // 'compact' removed in newer dio versions; control print with logPrint if desired.
-          // logPrint: (obj) => debugPrint(obj.toString()),
         ),
       );
     }
@@ -89,12 +95,6 @@ class AuthService {
         handler.next(options);
       },
       onError: (err, handler) async {
-        // if unauthorized, clear credentials to force re-login
-        if (err.response?.statusCode == 401) {
-          try {
-            await logout();
-          } catch (_) {}
-        }
         handler.next(err);
       },
     ));
@@ -121,14 +121,7 @@ class AuthService {
           throw Exception('Invalid login response format');
         }
 
-        // Save both in secure storage
-        await _secureStorage.write(key: _keyToken, value: token);
-        await _secureStorage.write(key: _keyUser, value: jsonEncode(user));
-
-        // Update in-memory cache & dio header
-        _cachedToken = token;
-        dio.options.headers['Authorization'] = 'Bearer $token';
-
+        await _persistAuth(token, user);
         return Map<String, dynamic>.from(user as Map);
       } else {
         throw Exception('Login failed (${resp.statusCode})');
@@ -141,7 +134,30 @@ class AuthService {
     }
   }
 
+  /// 🔐 Login with Google ID token
+  Future<Map<String, dynamic>> loginWithGoogle(String idToken) async {
+    try {
+      final resp = await dio.post('/api/auth/google', data: {'idToken': idToken});
+      if (resp.statusCode == 200 && resp.data != null) {
+        final token = resp.data['token'] as String?;
+        final user = resp.data['user'];
+        if (token == null || user == null) {
+          throw Exception('Invalid Google login response');
+        }
+        await _persistAuth(token, user);
+        return Map<String, dynamic>.from(user as Map);
+      }
+      throw Exception('Google login failed (${resp.statusCode})');
+    } on DioException catch (e) {
+      final backendMsg = (e.response?.data is Map)
+          ? e.response?.data['error']?.toString()
+          : null;
+      throw Exception(backendMsg ?? 'Google login request failed');
+    }
+  }
+
   /// 👤 Validate token and fetch user data (/api/me)
+  /// NOTE: Does NOT auto-logout on 401 - let caller handle navigation
   Future<Map<String, dynamic>> me() async {
     try {
       final resp = await dio.get('/api/me');
@@ -151,7 +167,8 @@ class AuthService {
         throw Exception('Failed to fetch user');
       }
     } on DioException catch (e) {
-      if (e.response?.statusCode == 401) await logout();
+      // Don't auto-logout here - network errors shouldn't clear session
+      // Let the caller (splash/dashboard) decide what to do
       rethrow;
     }
   }
@@ -186,10 +203,31 @@ class AuthService {
     }
   }
 
+  Future<void> _persistAuth(String token, dynamic user) async {
+    if (kIsWeb) {
+      // Web: Use SharedPreferences (localStorage) - survives iOS Safari PWA lifecycle
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setString(_keyToken, token);
+      await prefs.setString(_keyUser, jsonEncode(user));
+    } else {
+      // Mobile: Use SecureStorage
+      await _secureStorage.write(key: _keyToken, value: token);
+      await _secureStorage.write(key: _keyUser, value: jsonEncode(user));
+    }
+    _cachedToken = token;
+    dio.options.headers['Authorization'] = 'Bearer $token';
+  }
+
   /// 🚪 Logout and clear all stored credentials
   Future<void> logout() async {
-    await _secureStorage.delete(key: _keyToken);
-    await _secureStorage.delete(key: _keyUser);
+    if (kIsWeb) {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.remove(_keyToken);
+      await prefs.remove(_keyUser);
+    } else {
+      await _secureStorage.delete(key: _keyToken);
+      await _secureStorage.delete(key: _keyUser);
+    }
     _cachedToken = null;
     dio.options.headers.remove('Authorization');
   }
@@ -198,7 +236,14 @@ class AuthService {
 
   Future<String?> getToken() async {
     if (_cachedToken != null && _cachedToken!.isNotEmpty) return _cachedToken;
-    _cachedToken = await _secureStorage.read(key: _keyToken);
+    
+    if (kIsWeb) {
+      final prefs = await SharedPreferences.getInstance();
+      _cachedToken = prefs.getString(_keyToken);
+    } else {
+      _cachedToken = await _secureStorage.read(key: _keyToken);
+    }
+    
     if (_cachedToken != null && _cachedToken!.isNotEmpty) {
       dio.options.headers['Authorization'] = 'Bearer $_cachedToken';
     }
@@ -206,7 +251,13 @@ class AuthService {
   }
 
   Future<Map<String, dynamic>?> getStoredUser() async {
-    final data = await _secureStorage.read(key: _keyUser);
+    String? data;
+    if (kIsWeb) {
+      final prefs = await SharedPreferences.getInstance();
+      data = prefs.getString(_keyUser);
+    } else {
+      data = await _secureStorage.read(key: _keyUser);
+    }
     if (data == null) return null;
     return Map<String, dynamic>.from(jsonDecode(data) as Map);
   }

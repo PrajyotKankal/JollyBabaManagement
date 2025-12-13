@@ -7,6 +7,10 @@ import 'package:intl/intl.dart';
 import 'package:url_launcher/url_launcher.dart';
 import '../services/inventory_service.dart';
 import '../services/khatabook_service.dart';
+import '../utils/responsive_helper.dart';
+import '../widgets/khatabook_stats_header.dart';
+import '../widgets/khatabook_customer_card.dart';
+import '../widgets/pill_nav_bar.dart';
 
 class _CustomerGroup {
   const _CustomerGroup({
@@ -79,7 +83,6 @@ class _GroupData {
     });
     return candidates.first;
   }
-
   _CustomerGroup build() {
     return _CustomerGroup(
       name: _resolveName(),
@@ -111,6 +114,181 @@ class _KhatabookScreenState extends State<KhatabookScreen> {
   void initState() {
     super.initState();
     _load();
+  }
+
+  Future<void> _addGroupPayment(_CustomerGroup group) async {
+    final total = group.totalAmount;
+    final paid = group.totalPaid;
+    final remaining = group.totalRemaining;
+    if (remaining <= 0.0001) {
+      Get.snackbar('Payment', 'This customer is already settled', snackPosition: SnackPosition.BOTTOM);
+      return;
+    }
+
+    final amountCtrl = TextEditingController(text: remaining.toStringAsFixed(0));
+    final noteCtrl = TextEditingController();
+
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Add payment (overall)'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text('Total: ₹${total.toStringAsFixed(2)}'),
+            Text('Received: ₹${paid.toStringAsFixed(2)}'),
+            Text('Remaining: ₹${remaining.toStringAsFixed(2)}'),
+            const SizedBox(height: 12),
+            TextField(
+              controller: amountCtrl,
+              keyboardType: TextInputType.number,
+              decoration: const InputDecoration(labelText: 'Amount received (overall)'),
+            ),
+            TextField(
+              controller: noteCtrl,
+              decoration: const InputDecoration(labelText: 'Note (optional)'),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Cancel')),
+          FilledButton(onPressed: () => Navigator.pop(ctx, true), child: const Text('Save')),
+        ],
+      ),
+    );
+
+    if (ok != true) return;
+    double addTotal = double.tryParse(amountCtrl.text.trim()) ?? 0.0;
+    if (addTotal <= 0) {
+      Get.snackbar('Payment', 'Enter valid amount', snackPosition: SnackPosition.BOTTOM);
+      return;
+    }
+
+    // Distribute payment across entries oldest first
+    final entries = [...group.entries];
+    entries.sort((a, b) => _entryDate(a).compareTo(_entryDate(b)));
+
+    for (final entry in entries) {
+      if (addTotal <= 0.0001) break;
+      final totalEntry = _getTotal(entry);
+      final paidEntry = _getPaid(entry);
+      final remainingEntry = ((totalEntry - paidEntry).clamp(0, double.infinity) as num).toDouble();
+      if (remainingEntry <= 0.0001) continue;
+
+      final toApply = addTotal > remainingEntry ? remainingEntry : addTotal;
+      if (toApply <= 0) continue;
+
+      try {
+        if (_isManual(entry)) {
+          await _applyManualPayment(entry, toApply, noteCtrl.text.trim());
+        } else {
+          await _applyInventoryPayment(entry, toApply, noteCtrl.text.trim());
+        }
+      } catch (err) {
+        debugPrint('Failed to apply payment to entry: $err');
+      }
+
+      addTotal -= toApply;
+    }
+
+    await _load();
+    Get.snackbar('Payment', 'Overall payment updated', snackPosition: SnackPosition.BOTTOM);
+  }
+
+  Future<void> _markGroupSettled(_CustomerGroup group) async {
+    final remaining = group.totalRemaining;
+    if (remaining <= 0.0001) {
+      Get.snackbar('Khatabook', 'Already settled', snackPosition: SnackPosition.BOTTOM);
+      return;
+    }
+
+    final confirm = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Mark all settled?'),
+        content: Text('This will mark all pending transactions for ${group.name.isEmpty ? 'this customer' : group.name} as settled.'),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Cancel')),
+          FilledButton(onPressed: () => Navigator.pop(ctx, true), child: const Text('Confirm')),
+        ],
+      ),
+    );
+
+    if (confirm != true) return;
+
+    final entries = [...group.entries];
+    entries.sort((a, b) => _entryDate(a).compareTo(_entryDate(b)));
+
+    for (final entry in entries) {
+      final totalEntry = _getTotal(entry);
+      final paidEntry = _getPaid(entry);
+      final remainingEntry = ((totalEntry - paidEntry).clamp(0, double.infinity) as num).toDouble();
+      if (remainingEntry <= 0.0001) continue;
+
+      try {
+        if (_isManual(entry)) {
+          await _applyManualPayment(entry, remainingEntry, 'settled');
+        } else {
+          await _applyInventoryPayment(entry, remainingEntry, 'settled');
+        }
+      } catch (err) {
+        debugPrint('Failed to settle entry: $err');
+      }
+    }
+
+    await _load();
+    Get.snackbar('Khatabook', 'All transactions marked settled', snackPosition: SnackPosition.BOTTOM);
+  }
+
+  Future<void> _applyManualPayment(Map<String, dynamic> entry, double add, String note) async {
+    final total = _getTotal(entry);
+    final paid = _getPaid(entry);
+    final newPaid = (paid + add).clamp(0, total);
+    final id = _manualId(entry['manual_id']);
+    if (id == null) return;
+
+    final payload = {
+      'amount': total,
+      'paid': newPaid,
+      'description': entry['manual_description'],
+      'note': note.isNotEmpty ? note : entry['manual_note'],
+    };
+
+    final apiEntry = await KhatabookService.updateEntry(id, payload);
+    _replaceManualEntry(_manualFromApi(apiEntry));
+  }
+
+  Future<void> _applyInventoryPayment(Map<String, dynamic> entry, double add, String note) async {
+    final srNoRaw = entry['sr_no'];
+    final srNo = srNoRaw is int ? srNoRaw : int.tryParse(srNoRaw?.toString() ?? '');
+    if (srNo == null) return;
+
+    final fresh = await _fetchBySr(srNo) ?? entry;
+    final total = _getTotal(fresh);
+    final paid = _getPaid(fresh);
+    double newPaid = paid + add;
+    if (newPaid >= total - 0.0001) newPaid = total;
+    final newRemaining = ((total - newPaid).clamp(0, double.infinity) as num).toDouble();
+    final oldRemarks = (fresh['remarks'] ?? '').toString();
+    final combinedNote = note.isNotEmpty ? note : null;
+    final newRemarks = _updatedRemarks(oldRemarks, newPaid: newPaid, remainingAdd: newRemaining, note: combinedNote);
+
+    final res = await InventoryService.updateRemarks(srNo, newRemarks);
+    if (res['success'] == true) {
+      setState(() {
+        _sold = _sold.map((e) {
+          final v = e['sr_no'];
+          final id = v is int ? v : int.tryParse(v?.toString() ?? '');
+          if (id == srNo) {
+            final copy = Map<String, dynamic>.from(e);
+            copy['remarks'] = newRemarks;
+            return copy;
+          }
+          return e;
+        }).toList();
+      });
+    }
   }
 
   List<_CustomerGroup> _buildCustomerGroups(List<Map<String, dynamic>> entries) {
@@ -177,7 +355,18 @@ class _KhatabookScreenState extends State<KhatabookScreen> {
       group.totalRemaining += safeRemaining;
     }
 
-    return groups.values.map((g) => g.build()).toList();
+    // Build groups and sort so that customers with the most recent activity appear first
+    final result = groups.values.map((g) => g.build()).toList();
+    result.sort((a, b) {
+      final aLatest = a.entries.isEmpty
+          ? DateTime.fromMillisecondsSinceEpoch(0)
+          : _entryDate(a.entries.first);
+      final bLatest = b.entries.isEmpty
+          ? DateTime.fromMillisecondsSinceEpoch(0)
+          : _entryDate(b.entries.first);
+      return bLatest.compareTo(aLatest); // latest first
+    });
+    return result;
   }
 
   String _custName(Map<String, dynamic> r) => (r['customer_name'] ?? r['customerName'] ?? r['manual_name'] ?? r['name'] ?? '').toString();
@@ -540,7 +729,7 @@ class _KhatabookScreenState extends State<KhatabookScreen> {
 
   Future<void> _openCustomerPopup(_CustomerGroup group) async {
     final theme = Theme.of(context);
-    final rows = group.entries;
+    final rows = [...group.entries]..sort((a, b) => _entryDate(b).compareTo(_entryDate(a))); // latest first
     final total = group.totalAmount;
     final paid = group.totalPaid;
     final remaining = group.totalRemaining;
@@ -548,19 +737,34 @@ class _KhatabookScreenState extends State<KhatabookScreen> {
     String amountText(double value) => currency.format(value);
 
     Widget buildSummaryPill(String label, double value, {Color? color}) {
-      final resolved = color ?? theme.colorScheme.primary;
+      // Use a soft whitish‑purplish style for all summary chips
+      const Color bg = Color(0xFFF4F0FF); // light whitish purple
+      const Color fg = Color(0xFF5C4ACB); // soft purple for text
+
       return Container(
         padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
         decoration: BoxDecoration(
-          color: resolved.withOpacity(0.12),
+          color: bg,
           borderRadius: BorderRadius.circular(14),
         ),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Text(label, style: theme.textTheme.labelSmall?.copyWith(color: resolved.withOpacity(0.8))),
+            Text(
+              label,
+              style: theme.textTheme.labelSmall?.copyWith(
+                color: fg.withOpacity(0.85),
+                fontWeight: FontWeight.w500,
+              ),
+            ),
             const SizedBox(height: 4),
-            Text(amountText(value), style: theme.textTheme.titleMedium?.copyWith(color: resolved, fontWeight: FontWeight.w600)),
+            Text(
+              amountText(value),
+              style: theme.textTheme.titleMedium?.copyWith(
+                color: fg,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
           ],
         ),
       );
@@ -573,56 +777,6 @@ class _KhatabookScreenState extends State<KhatabookScreen> {
       final settled = remaining <= 0.0001;
       final note = (entry['manual_description'] ?? entry['manual_note'] ?? '').toString().trim();
       final date = DateFormat('dd MMM yyyy').format(_entryDate(entry));
-      final actions = <Widget>[
-        if (!settled)
-          OutlinedButton.icon(
-            icon: const Icon(Icons.add_card, size: 18),
-            label: const Text('Add payment'),
-            onPressed: () async {
-              Navigator.of(ctx).pop();
-              await _showManualPaymentDialog(entry);
-            },
-          ),
-        if (!settled)
-          OutlinedButton.icon(
-            icon: const Icon(Icons.done_all, size: 18),
-            label: const Text('Mark settled'),
-            onPressed: () async {
-              Navigator.of(ctx).pop();
-              await _markManualEntrySettled(entry);
-            },
-          ),
-        OutlinedButton.icon(
-          icon: const Icon(Icons.edit, size: 18),
-          label: const Text('Edit'),
-          onPressed: () async {
-            Navigator.of(ctx).pop();
-            await _editManualEntry(entry);
-          },
-        ),
-        OutlinedButton.icon(
-          icon: const Icon(Icons.delete_outline, size: 18),
-          label: const Text('Delete'),
-          style: OutlinedButton.styleFrom(foregroundColor: theme.colorScheme.error),
-          onPressed: () async {
-            final confirm = await showDialog<bool>(
-              context: ctx,
-              builder: (dialogCtx) => AlertDialog(
-                title: const Text('Delete entry?'),
-                content: const Text('This manual entry will be removed permanently.'),
-                actions: [
-                  TextButton(onPressed: () => Navigator.of(dialogCtx).pop(false), child: const Text('Cancel')),
-                  FilledButton(onPressed: () => Navigator.of(dialogCtx).pop(true), child: const Text('Delete')),
-                ],
-              ),
-            );
-            if (confirm == true) {
-              Navigator.of(ctx).pop();
-              _deleteManualEntry(entry['manual_id']);
-            }
-          },
-        ),
-      ];
 
       return Card(
         margin: EdgeInsets.zero,
@@ -660,7 +814,7 @@ class _KhatabookScreenState extends State<KhatabookScreen> {
                   Text('Remaining: ${amountText(remaining)}', style: theme.textTheme.bodyMedium?.copyWith(color: settled ? theme.colorScheme.tertiary : theme.colorScheme.error)),
                 ],
               ),
-              const SizedBox(height: 14),
+              const SizedBox(height: 8),
               if (settled)
                 Align(
                   alignment: Alignment.centerLeft,
@@ -669,12 +823,6 @@ class _KhatabookScreenState extends State<KhatabookScreen> {
                     decoration: BoxDecoration(color: const Color(0xFFE8F5E9), borderRadius: BorderRadius.circular(10)),
                     child: const Text('Settled', style: TextStyle(color: Color(0xFF2E7D32), fontWeight: FontWeight.w600)),
                   ),
-                )
-              else
-                Wrap(
-                  spacing: 8,
-                  runSpacing: 8,
-                  children: actions,
                 ),
             ],
           ),
@@ -740,61 +888,13 @@ class _KhatabookScreenState extends State<KhatabookScreen> {
                   Text('Paid: ${amountText(paid)}', style: theme.textTheme.bodyMedium),
                 ],
               ),
-              const SizedBox(height: 14),
-              if (!settled)
-                Wrap(
-                  spacing: 8,
-                  runSpacing: 8,
-                  children: [
-                    FilledButton.icon(
-                      icon: const Icon(Icons.add_card),
-                      label: const Text('Add payment'),
-                      onPressed: () async {
-                        Navigator.of(ctx).pop();
-                        await _addPayment(entry);
-                      },
-                    ),
-                    OutlinedButton.icon(
-                      icon: const Icon(Icons.done_all),
-                      label: const Text('Mark settled'),
-                      onPressed: () async {
-                        Navigator.of(ctx).pop();
-                        final fresh = await _fetchBySr(srNo ?? 0) ?? entry;
-                        final totalNow = _getTotal(fresh);
-                        final newRemaining = 0.0;
-                        final newRemarks = _updatedRemarks((fresh['remarks'] ?? '').toString(), newPaid: totalNow, remainingAdd: newRemaining, note: 'settlement ${DateFormat('yyyy-MM-dd').format(DateTime.now())}');
-                        try {
-                          if (srNo != null) {
-                            final res = await InventoryService.updateRemarks(srNo, newRemarks);
-                            if (res['success'] == true) {
-                              Get.snackbar('Payment', 'Settled', snackPosition: SnackPosition.BOTTOM);
-                              setState(() {
-                                _sold = _sold.map((e) {
-                                  final v = e['sr_no'];
-                                  final id = v is int ? v : int.tryParse(v?.toString() ?? '');
-                                  if (id == srNo) {
-                                    final copy = Map<String, dynamic>.from(e);
-                                    copy['remarks'] = newRemarks;
-                                    return copy;
-                                  }
-                                  return e;
-                                }).toList();
-                              });
-                              await _load();
-                            }
-                          }
-                        } catch (_) {
-                          Get.snackbar('Payment', 'Failed', snackPosition: SnackPosition.BOTTOM);
-                        }
-                      },
-                    ),
-                  ],
-                ),
             ],
           ),
         ),
       );
     }
+
+    final hasSingleManual = rows.length == 1 && _isManual(rows.first);
 
     await showModalBottomSheet<void>(
       context: context,
@@ -860,6 +960,100 @@ class _KhatabookScreenState extends State<KhatabookScreen> {
                       ),
                     ),
                     const SizedBox(height: 12),
+                    Padding(
+                      padding: const EdgeInsets.symmetric(horizontal: 20),
+                      child: Row(
+                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                        children: [
+                          Expanded(child: buildSummaryPill('Total', total)),
+                          const SizedBox(width: 8),
+                          Expanded(child: buildSummaryPill('Paid', paid, color: theme.colorScheme.secondary)),
+                          const SizedBox(width: 8),
+                          Expanded(child: buildSummaryPill('Remaining', remaining, color: theme.colorScheme.error)),
+                        ],
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                    if (hasSingleManual)
+                      Padding(
+                        padding: const EdgeInsets.symmetric(horizontal: 20),
+                        child: Row(
+                          children: [
+                            Expanded(
+                              child: OutlinedButton.icon(
+                                icon: const Icon(Icons.edit),
+                                label: const Text('Edit overall (manual)'),
+                                onPressed: () async {
+                                  Navigator.of(ctx).pop();
+                                  await _editManualEntry(rows.first);
+                                },
+                              ),
+                            ),
+                            const SizedBox(width: 8),
+                            Expanded(
+                              child: OutlinedButton.icon(
+                                icon: const Icon(Icons.delete_outline),
+                                label: const Text('Delete (manual)'),
+                                style: OutlinedButton.styleFrom(
+                                  foregroundColor: theme.colorScheme.error,
+                                ),
+                                onPressed: () async {
+                                  final confirm = await showDialog<bool>(
+                                    context: ctx,
+                                    builder: (dialogCtx) => AlertDialog(
+                                      title: const Text('Delete entry?'),
+                                      content: const Text(
+                                          'This manual entry will be removed permanently for this customer.'),
+                                      actions: [
+                                        TextButton(
+                                            onPressed: () => Navigator.of(dialogCtx).pop(false),
+                                            child: const Text('Cancel')),
+                                        FilledButton(
+                                            onPressed: () => Navigator.of(dialogCtx).pop(true),
+                                            child: const Text('Delete')),
+                                      ],
+                                    ),
+                                  );
+                                  if (confirm == true) {
+                                    Navigator.of(ctx).pop();
+                                    await _deleteManualEntry(rows.first['manual_id']);
+                                  }
+                                },
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    if (hasSingleManual) const SizedBox(height: 8),
+                    Padding(
+                      padding: const EdgeInsets.symmetric(horizontal: 20),
+                      child: Row(
+                        children: [
+                          Expanded(
+                            child: FilledButton.icon(
+                              icon: const Icon(Icons.add_card),
+                              label: const Text('Add payment (overall)'),
+                              onPressed: () async {
+                                Navigator.of(ctx).pop();
+                                await _addGroupPayment(group);
+                              },
+                            ),
+                          ),
+                          const SizedBox(width: 8),
+                          Expanded(
+                            child: OutlinedButton.icon(
+                              icon: const Icon(Icons.done_all),
+                              label: const Text('Mark settled (overall)'),
+                              onPressed: () async {
+                                Navigator.of(ctx).pop();
+                                await _markGroupSettled(group);
+                              },
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                    const SizedBox(height: 8),
                     Expanded(
                       child: rows.isEmpty
                           ? Center(child: Text('No transactions yet', style: theme.textTheme.bodyMedium))
@@ -896,6 +1090,9 @@ class _KhatabookScreenState extends State<KhatabookScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final deviceType = ResponsiveHelper.getDeviceType(context);
+    final isPortrait = ResponsiveHelper.isPortrait(context);
+    
     final entries = _allEntries;
     final totalSales = entries.fold<double>(0.0, (s, r) => s + _getTotal(r));
     final totalCollected = entries.fold<double>(0.0, (s, r) {
@@ -927,128 +1124,228 @@ class _KhatabookScreenState extends State<KhatabookScreen> {
     }).toList();
     final customerGroups = _buildCustomerGroups(filtered);
 
+    final responsivePadding = deviceType == DeviceType.mobile ? 12.0 : deviceType == DeviceType.tablet ? 16.0 : 20.0;
+    final showBottomNav = deviceType == DeviceType.mobile;
+
     return Scaffold(
-      appBar: AppBar(title: Text('Khatabook', style: GoogleFonts.poppins(fontWeight: FontWeight.w600))),
+      backgroundColor: const Color(0xFFF7F9FF),
+      appBar: AppBar(
+        backgroundColor: Colors.transparent,
+        elevation: 0,
+        leading: IconButton(
+          icon: const Icon(Icons.arrow_back_rounded, color: Color(0xFF1E2343)),
+          onPressed: () => Get.back(),
+        ),
+        title: Text(
+          'Khatabook',
+          style: GoogleFonts.poppins(
+            fontWeight: FontWeight.w700,
+            fontSize: 20,
+            color: const Color(0xFF1E2343),
+          ),
+        ),
+        centerTitle: false,
+        actions: [
+          if (!showBottomNav) ...[
+            IconButton(
+              icon: Icon(
+                _onlyCredit ? Icons.filter_alt_rounded : Icons.filter_alt_outlined,
+                color: _onlyCredit ? const Color(0xFF6D5DF6) : Colors.grey.shade600,
+              ),
+              tooltip: 'Only credit',
+              onPressed: () => setState(() => _onlyCredit = !_onlyCredit),
+            ),
+            IconButton(
+              icon: _exporting
+                  ? const SizedBox(
+                      width: 20,
+                      height: 20,
+                      child: CircularProgressIndicator(strokeWidth: 2, valueColor: AlwaysStoppedAnimation(Color(0xFF6D5DF6))),
+                    )
+                  : const Icon(Icons.file_download_outlined),
+              color: Colors.grey.shade600,
+              tooltip: 'Export Excel',
+              onPressed: _exporting ? null : _downloadExcel,
+            ),
+          ],
+          IconButton(
+            icon: _loading
+                ? const SizedBox(
+                    width: 20,
+                    height: 20,
+                    child: CircularProgressIndicator(strokeWidth: 2, valueColor: AlwaysStoppedAnimation(Color(0xFF6D5DF6))),
+                  )
+                : const Icon(Icons.refresh_rounded),
+            color: Colors.grey.shade600,
+            tooltip: 'Refresh',
+            onPressed: _loading ? null : _load,
+          ),
+        ],
+      ),
       body: _loading
-          ? const Center(child: CircularProgressIndicator())
+          ? const Center(child: CircularProgressIndicator(valueColor: AlwaysStoppedAnimation(Color(0xFF6D5DF6))))
           : RefreshIndicator(
+              color: const Color(0xFF6D5DF6),
               onRefresh: _load,
               child: ListView(
-                padding: const EdgeInsets.all(12),
+                padding: EdgeInsets.all(responsivePadding),
                 children: [
-                  Row(children: [
-                    Expanded(
-                      child: TextField(
-                        controller: _queryCtrl,
-                        onChanged: (_) => setState(() {}),
-                        decoration: InputDecoration(
-                          hintText: 'Search by customer, mobile or model',
-                          prefixIcon: const Icon(Icons.search),
-                          filled: true,
-                          fillColor: const Color(0xFFF7F8FA),
-                          contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
-                          border: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: BorderSide.none),
-                        ),
-                      ),
-                    ),
-                    const SizedBox(width: 8),
-                    FilterChip(
-                      label: const Text('Only credit'),
-                      selected: _onlyCredit,
-                      onSelected: (v) => setState(() => _onlyCredit = v),
-                    ),
-                    const SizedBox(width: 8),
-                    Tooltip(
-                      message: 'Download all transactions',
-                      child: ElevatedButton.icon(
-                        style: ElevatedButton.styleFrom(
-                          backgroundColor: const Color(0xFF1E88E5),
-                          foregroundColor: Colors.white,
-                          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
-                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-                        ),
-                        onPressed: _exporting ? null : _downloadExcel,
-                        icon: _exporting
-                            ? const SizedBox(width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2, valueColor: AlwaysStoppedAnimation<Color>(Colors.white)))
-                            : const Icon(Icons.file_download_outlined, size: 18),
-                        label: Text(_exporting ? 'Preparing…' : 'Export Excel'),
-                      ),
-                    ),
-                  ]),
-                  const SizedBox(height: 10),
+                  // Stats Header
+                  KhatabookStatsHeader(
+                    totalAmount: totalSales,
+                    totalReceived: totalCollected,
+                    totalPending: totalRemaining,
+                    customerCount: customerGroups.length,
+                  ),
+                  
+                  // Premium Search Bar
                   Container(
+                    margin: const EdgeInsets.only(bottom: 16),
                     decoration: BoxDecoration(
-                      gradient: const LinearGradient(colors: [Color(0xFF6366F1), Color(0xFF22C1C3)]),
+                      color: Colors.white,
                       borderRadius: BorderRadius.circular(14),
+                      boxShadow: [
+                        BoxShadow(
+                          color: Colors.black.withOpacity(0.04),
+                          blurRadius: 10,
+                          offset: const Offset(0, 4),
+                        ),
+                      ],
                     ),
-                    padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+                    child: TextField(
+                      controller: _queryCtrl,
+                      onChanged: (_) => setState(() {}),
+                      style: GoogleFonts.poppins(fontSize: 14),
+                      decoration: InputDecoration(
+                        hintText: 'Search customer, mobile or model...',
+                        hintStyle: GoogleFonts.poppins(color: Colors.grey.shade400),
+                        prefixIcon: Icon(Icons.search_rounded, color: Colors.grey.shade400),
+                        suffixIcon: _queryCtrl.text.isNotEmpty
+                            ? IconButton(
+                                icon: const Icon(Icons.clear_rounded, size: 20),
+                                color: Colors.grey.shade400,
+                                onPressed: () {
+                                  _queryCtrl.clear();
+                                  setState(() {});
+                                },
+                              )
+                            : null,
+                        filled: true,
+                        fillColor: Colors.white,
+                        contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+                        border: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(14),
+                          borderSide: BorderSide.none,
+                        ),
+                        enabledBorder: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(14),
+                          borderSide: BorderSide(color: Colors.grey.shade100, width: 1.5),
+                        ),
+                        focusedBorder: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(14),
+                          borderSide: const BorderSide(color: Color(0xFF6D5DF6), width: 1.5),
+                        ),
+                      ),
+                    ),
+                  ),
+                  
+                  // Mobile filter chips
+                  if (showBottomNav)
+                    Padding(
+                      padding: const EdgeInsets.only(bottom: 12),
+                      child: Row(
+                        children: [
+                          FilterChip(
+                            label: Text('Only Credit', style: GoogleFonts.poppins(fontSize: 12, fontWeight: FontWeight.w500)),
+                            selected: _onlyCredit,
+                            selectedColor: const Color(0xFF6D5DF6).withOpacity(0.15),
+                            checkmarkColor: const Color(0xFF6D5DF6),
+                            onSelected: (v) => setState(() => _onlyCredit = v),
+                          ),
+                          const SizedBox(width: 8),
+                          ActionChip(
+                            avatar: _exporting
+                                ? const SizedBox(width: 14, height: 14, child: CircularProgressIndicator(strokeWidth: 2))
+                                : const Icon(Icons.file_download_outlined, size: 16),
+                            label: Text(_exporting ? 'Exporting...' : 'Export', style: GoogleFonts.poppins(fontSize: 12)),
+                            onPressed: _exporting ? null : _downloadExcel,
+                          ),
+                        ],
+                      ),
+                    ),
+                  
+                  // Section header
+                  Padding(
+                    padding: const EdgeInsets.only(bottom: 12),
                     child: Row(
                       mainAxisAlignment: MainAxisAlignment.spaceBetween,
                       children: [
-                        _stat('Total Sales', totalSales),
-                        _stat('Collected', totalCollected),
-                        _stat('Outstanding', totalRemaining),
+                        Text(
+                          'Customers',
+                          style: GoogleFonts.poppins(
+                            fontSize: 16,
+                            fontWeight: FontWeight.w600,
+                            color: const Color(0xFF1E2343),
+                          ),
+                        ),
+                        Text(
+                          '${customerGroups.length} total',
+                          style: GoogleFonts.poppins(
+                            fontSize: 12,
+                            color: Colors.grey.shade500,
+                          ),
+                        ),
                       ],
                     ),
                   ),
-                  const SizedBox(height: 8),
+                  
+                  // Customer cards
                   ...customerGroups.map((group) {
-                    final name = group.name;
-                    final mobile = group.displayMobile;
-                    final rows = group.entries;
-                    final totalRem = group.totalRemaining;
-                    final count = group.count;
-                    final allSettled = group.allSettled;
-                    return InkWell(
-                      onTap: () => _openCustomerPopup(group),
-                      child: Container(
-                        margin: const EdgeInsets.symmetric(vertical: 6),
-                        padding: const EdgeInsets.all(12),
-                        decoration: BoxDecoration(
-                          color: Colors.white,
-                          borderRadius: BorderRadius.circular(14),
-                          boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.05), blurRadius: 10, offset: const Offset(0, 6))],
-                        ),
-                        child: Row(children: [
-                          CircleAvatar(
-                            backgroundColor: const Color(0xFFE8ECFF),
-                            child: Text((name.isNotEmpty ? name[0] : '?').toUpperCase(), style: const TextStyle(color: Color(0xFF3F51B5))),
-                          ),
-                          const SizedBox(width: 12),
-                          Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                            Text(name.isEmpty ? 'Unknown' : name, style: const TextStyle(fontWeight: FontWeight.w600)),
-                            if (mobile.isNotEmpty) Text(mobile, style: const TextStyle(fontSize: 12, color: Colors.black54)),
-                          ])),
-                          Column(crossAxisAlignment: CrossAxisAlignment.end, children: [
-                            if (allSettled)
-                              Container(
-                                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                                decoration: BoxDecoration(color: const Color(0xFFE8F5E9), borderRadius: BorderRadius.circular(10)),
-                                child: const Text('Settled', style: TextStyle(color: Color(0xFF2E7D32), fontWeight: FontWeight.w700, fontSize: 12)),
-                              )
-                            else
-                              Container(
-                                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                                decoration: BoxDecoration(color: const Color(0xFFFFF3E0), borderRadius: BorderRadius.circular(10)),
-                                child: Text('₹${totalRem.toStringAsFixed(0)}', style: const TextStyle(color: Color(0xFFEF6C00), fontWeight: FontWeight.w700, fontSize: 12)),
-                              ),
-                            const SizedBox(height: 4),
-                            Text('$count items', style: const TextStyle(fontSize: 12, color: Colors.black54)),
-                          ]),
-                          const SizedBox(width: 6),
-                          const Icon(Icons.chevron_right, color: Colors.black38),
-                        ]),
+                    return Padding(
+                      padding: const EdgeInsets.only(bottom: 10),
+                      child: KhatabookCustomerCard(
+                        name: group.name,
+                        mobile: group.displayMobile,
+                        totalAmount: group.totalAmount,
+                        paidAmount: group.totalPaid,
+                        remainingAmount: group.totalRemaining,
+                        entryCount: group.count,
+                        isSettled: group.allSettled,
+                        onTap: () => _openCustomerPopup(group),
                       ),
                     );
                   }),
+                  
+                  // Bottom padding for FAB/nav
+                  const SizedBox(height: 80),
                 ],
               ),
             ),
-      floatingActionButton: FloatingActionButton.extended(
-        onPressed: _openAddManualEntry,
-        icon: const Icon(Icons.add),
-        label: const Text('Add entry'),
-      ),
+      // Mobile bottom navigation
+      bottomNavigationBar: showBottomNav
+          ? PillNavBar(
+              selectedIndex: 0,
+              onItemSelected: (index) {
+                if (index == 1) {
+                  _openAddManualEntry();
+                }
+              },
+              items: const [
+                PillNavItem(icon: Icons.people_rounded, label: 'Customers'),
+                PillNavItem(icon: Icons.add_rounded, label: 'Add Entry'),
+              ],
+            )
+          : null,
+      // Desktop FAB
+      floatingActionButton: showBottomNav
+          ? null
+          : FloatingActionButton.extended(
+              onPressed: _openAddManualEntry,
+              backgroundColor: const Color(0xFF6D5DF6),
+              foregroundColor: Colors.white,
+              icon: const Icon(Icons.add_rounded),
+              label: Text('Add Entry', style: GoogleFonts.poppins(fontWeight: FontWeight.w600)),
+            ),
     );
   }
 

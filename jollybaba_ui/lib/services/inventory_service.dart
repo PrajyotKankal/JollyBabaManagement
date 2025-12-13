@@ -46,6 +46,13 @@ class InventoryService {
     throw Exception('Create failed: ${r.statusCode} ${r.body}');
   }
 
+  // Create many AVAILABLE items in a single batch
+  static Future<Map<String, dynamic>> createItemsMultiple(Map<String, dynamic> payload) async {
+    final r = await http.post(_u('/api/inventory/add-multiple'), headers: await _headers(), body: jsonEncode(payload));
+    if (r.statusCode == 200) return jsonDecode(r.body) as Map<String, dynamic>;
+    throw Exception('Create-multiple failed: ${r.statusCode} ${r.body}');
+  }
+
   // List items with filters
   static Future<Map<String, dynamic>> listItems({String? q, String? status, String? vendor, String? brand, String? from, String? to, String sort = 'date', String order = 'desc'}) async {
     final r = await http.get(_u('/api/inventory', {
@@ -67,6 +74,21 @@ class InventoryService {
     final r = await http.post(_u('/api/inventory/$srNo/sell'), headers: await _headers(), body: jsonEncode(payload));
     if (r.statusCode == 200) return jsonDecode(r.body) as Map<String, dynamic>;
     throw Exception('Sell failed: ${r.statusCode} ${r.body}');
+  }
+
+  // Mark multiple items as SOLD in a single sale
+  static Future<Map<String, dynamic>> sellMultiple(List<int> srNos, Map<String, dynamic> payload) async {
+    final body = <String, dynamic>{
+      'srNos': srNos,
+      ...payload,
+    };
+    final r = await http.post(
+      _u('/api/inventory/sell-multiple'),
+      headers: await _headers(),
+      body: jsonEncode(body),
+    );
+    if (r.statusCode == 200) return jsonDecode(r.body) as Map<String, dynamic>;
+    throw Exception('Multi-sell failed: ${r.statusCode} ${r.body}');
   }
 
   // Cancel sale and mark as AVAILABLE again

@@ -1,12 +1,17 @@
 import 'dart:developer' as developer;
 import 'dart:math' as math;
 import 'package:flutter/material.dart';
+import 'package:flutter/foundation.dart';
 import 'package:get/get.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:flutter_animate/flutter_animate.dart';
+import 'package:google_sign_in/google_sign_in.dart';
 
 import '../services/auth_service.dart';
+import '../widgets/responsive_wrapper.dart';
+import '../theme/app_colors.dart';
 import 'login_success_screen.dart';
+import '../config.dart';
 
 class LoginScreen extends StatefulWidget {
   const LoginScreen({super.key});
@@ -19,11 +24,13 @@ class _LoginScreenState extends State<LoginScreen>
     with SingleTickerProviderStateMixin {
   final _formKey = GlobalKey<FormState>();
   final AuthService _auth = AuthService();
+  late final GoogleSignIn _googleSignIn;
 
   final TextEditingController _emailCtrl = TextEditingController();
   final TextEditingController _passwordCtrl = TextEditingController();
 
   bool _isLoading = false;
+  bool _googleLoading = false;
   bool _obscure = true;
   late AnimationController _borderController;
 
@@ -34,6 +41,13 @@ class _LoginScreenState extends State<LoginScreen>
       vsync: this,
       duration: const Duration(seconds: 6),
     )..repeat();
+    _googleSignIn = GoogleSignIn(
+      // For web: clientId is required to get ID token
+      // For mobile: serverClientId is used for backend verification
+      clientId: kIsWeb ? AppConfig.googleWebClientId : null,
+      serverClientId: kIsWeb ? null : AppConfig.googleWebClientId,
+      scopes: const ['email', 'profile', 'openid'],
+    );
   }
 
   @override
@@ -72,7 +86,7 @@ class _LoginScreenState extends State<LoginScreen>
       final msg = e.toString().replaceAll('Exception: ', '');
       Get.snackbar(
         'Login failed',
-        msg,
+        msg.length > 100 ? '${msg.substring(0, 100)}...' : msg,
         snackPosition: SnackPosition.BOTTOM,
         backgroundColor: Colors.redAccent.withValues(alpha: 0.92),
         colorText: Colors.white,
@@ -82,7 +96,7 @@ class _LoginScreenState extends State<LoginScreen>
     } catch (e) {
       Get.snackbar(
         'Unexpected error',
-        e.toString(),
+        e.toString().length > 100 ? '${e.toString().substring(0, 100)}...' : e.toString(),
         snackPosition: SnackPosition.BOTTOM,
         backgroundColor: Colors.redAccent.withValues(alpha: 0.9),
         colorText: Colors.white,
@@ -94,59 +108,94 @@ class _LoginScreenState extends State<LoginScreen>
     }
   }
 
+  Future<void> _loginWithGoogle() async {
+    if (_googleLoading) return;
+    FocusScope.of(context).unfocus();
+    setState(() => _googleLoading = true);
+
+    try {
+      GoogleSignInAccount? account;
+      
+      if (kIsWeb) {
+        // For web: use signInSilently which works better with modern browsers
+        // The user will be prompted via Google's OAuth consent screen
+        account = await _googleSignIn.signInSilently() ?? await _googleSignIn.signIn();
+      } else {
+        // For Android/iOS: keep existing approach
+        await _googleSignIn.signOut();
+        account = await _googleSignIn.signIn();
+      }
+      
+      if (account == null) {
+        return; // user cancelled
+      }
+
+      final auth = await account.authentication;
+      final idToken = auth.idToken;
+      if (idToken == null) {
+        throw Exception('Google did not return an ID token.');
+      }
+
+      final user = await _auth.loginWithGoogle(idToken);
+      final role = (user['role'] ?? 'technician').toString().toLowerCase();
+
+      if (!mounted) return;
+      Get.offAll(
+        () => LoginSuccessScreen(
+          role: role,
+          userName: user['name'] ?? account?.displayName ?? '',
+        ),
+        transition: Transition.fadeIn,
+        duration: const Duration(milliseconds: 400),
+      );
+    } on Exception catch (e) {
+      debugPrint('🔴 GOOGLE LOGIN ERROR: $e');
+      final msg = e.toString().replaceAll('Exception: ', '');
+      Get.snackbar(
+        'Google Sign-In failed',
+        msg.length > 100 ? '${msg.substring(0, 100)}...' : msg,
+        snackPosition: SnackPosition.BOTTOM,
+        backgroundColor: Colors.redAccent.withValues(alpha: 0.92),
+        colorText: Colors.white,
+        duration: const Duration(seconds: 4),
+        margin: const EdgeInsets.all(14),
+      );
+    } catch (e) {
+      debugPrint('🔴 UNEXPECTED ERROR: $e');
+      Get.snackbar(
+        'Unexpected error',
+        e.toString().length > 100 ? '${e.toString().substring(0, 100)}...' : e.toString(),
+        snackPosition: SnackPosition.BOTTOM,
+        backgroundColor: Colors.redAccent.withValues(alpha: 0.9),
+        colorText: Colors.white,
+        duration: const Duration(seconds: 4),
+        margin: const EdgeInsets.all(14),
+      );
+    } finally {
+      if (mounted) setState(() => _googleLoading = false);
+    }
+  }
   @override
   Widget build(BuildContext context) {
-    final screenWidth = MediaQuery.of(context).size.width;
-    final double cardMaxWidth = math.min(screenWidth * 0.82, 380);
-
-    return Scaffold(
-      body: Container(
-        decoration: const BoxDecoration(
-          gradient: LinearGradient(
-            colors: [
-              Color(0xFFF9FAFF),
-              Color(0xFFECEBFF),
-              Color(0xFFF7F5FF),
-            ],
-            begin: Alignment.topLeft,
-            end: Alignment.bottomRight,
-          ),
-        ),
-        child: SafeArea(
-          child: Center(
-            child: SingleChildScrollView(
-              padding: const EdgeInsets.symmetric(vertical: 30, horizontal: 12),
-              child: AnimatedBuilder(
-                animation: _borderController,
-                builder: (context, _) {
-                  return SizedBox(
-                    width: cardMaxWidth,
-                    child: CustomPaint(
-                      painter: _AnimatedBorderPainter(
-                        progress: _borderController.value,
-                      ),
-                      child: Container(
-                        margin: const EdgeInsets.symmetric(horizontal: 4),
-                        decoration: BoxDecoration(
-                          borderRadius: BorderRadius.circular(20),
-                          boxShadow: [
-                            BoxShadow(
-                              color:
-                                  const Color(0xFF6D5DF6).withValues(alpha: 0.08),
-                              blurRadius: 22,
-                              spreadRadius: 0.5,
-                              offset: const Offset(0, 6),
-                            ),
-                          ],
-                        ),
-                        child: Card(
-                          color: Colors.white,
-                          elevation: 6,
-                          shadowColor: Colors.black12,
-                          shape: RoundedRectangleBorder(
-                              borderRadius: BorderRadius.circular(16)),
-                          margin: const EdgeInsets.all(6),
-                          child: Padding(
+    return ResponsiveWrapper(
+      maxWidth: 600,
+      child: Scaffold(
+        body: Center(
+          child: SingleChildScrollView(
+            child: AnimatedBuilder(
+              animation: _borderController,
+              builder: (context, child) {
+                return CustomPaint(
+                  painter: _AnimatedBorderPainter(
+                    progress: _borderController.value,
+                  ),
+                  child: Container(
+                    margin: const EdgeInsets.symmetric(horizontal: 4),
+                    decoration: BoxDecoration(
+                      borderRadius: BorderRadius.circular(22),
+                      boxShadow: [AppColors.softShadow],
+                    ),
+                    child: Padding(
                             padding: const EdgeInsets.symmetric(
                                 horizontal: 16, vertical: 20),
                             child: Column(
@@ -156,17 +205,17 @@ class _LoginScreenState extends State<LoginScreen>
                                 Text(
                                   'JollyBaba',
                                   style: GoogleFonts.poppins(
-                                    fontSize: 20,
+                                    fontSize: 22,
                                     fontWeight: FontWeight.w700,
-                                    color: const Color(0xFF5A45E0),
+                                    color: AppColors.textPrimary,
                                   ),
                                 ),
                                 const SizedBox(height: 4),
                                 Text(
-                                  'Sign in to continue',
+                                  'Sign in to manage tickets, stock & finances',
                                   style: GoogleFonts.poppins(
                                     fontSize: 12,
-                                    color: Colors.black54,
+                                    color: AppColors.textSecondary,
                                   ),
                                   textAlign: TextAlign.center,
                                 ),
@@ -184,15 +233,18 @@ class _LoginScreenState extends State<LoginScreen>
                                         style:
                                             GoogleFonts.poppins(fontSize: 13),
                                         decoration: InputDecoration(
-                                          labelText: 'Email',
+                                          labelText: 'ID',
                                           prefixIcon: const Icon(
                                             Icons.email_outlined,
-                                            color: Color(0xFF6D5DF6),
+                                            color: AppColors.accentBlue,
                                             size: 20,
                                           ),
                                           border: OutlineInputBorder(
                                             borderRadius:
                                                 BorderRadius.circular(10),
+                                            borderSide: const BorderSide(
+                                              color: AppColors.borderGrey,
+                                            ),
                                           ),
                                           isDense: true,
                                           contentPadding:
@@ -200,16 +252,16 @@ class _LoginScreenState extends State<LoginScreen>
                                                   vertical: 12,
                                                   horizontal: 12),
                                           filled: true,
-                                          fillColor: const Color(0xFFF5F6FA),
+                                          fillColor: Colors.white,
                                         ),
                                         validator: (v) {
                                           if (v == null || v.trim().isEmpty) {
-                                            return 'Email required';
+                                            return 'ID required';
                                           }
                                           if (!RegExp(
                                                   r'^[^@\s]+@[^@\s]+\.[^@\s]+$')
                                               .hasMatch(v.trim())) {
-                                            return 'Invalid email';
+                                            return 'Invalid ID';
                                           }
                                           return null;
                                         },
@@ -224,7 +276,7 @@ class _LoginScreenState extends State<LoginScreen>
                                           labelText: 'Password',
                                           prefixIcon: const Icon(
                                             Icons.lock_outline,
-                                            color: Color(0xFF6D5DF6),
+                                            color: AppColors.accentBlue,
                                             size: 20,
                                           ),
                                           suffixIcon: IconButton(
@@ -267,13 +319,14 @@ class _LoginScreenState extends State<LoginScreen>
                                           onPressed:
                                               _isLoading ? null : _submit,
                                           style: ElevatedButton.styleFrom(
-                                            backgroundColor:
-                                                const Color(0xFF6D5DF6),
+                                            padding: const EdgeInsets.symmetric(
+                                                horizontal: 12, vertical: 10),
+                                            backgroundColor: AppColors.accentBlue,
                                             shape: RoundedRectangleBorder(
                                               borderRadius:
                                                   BorderRadius.circular(10),
                                             ),
-                                            elevation: 2,
+                                            elevation: 3,
                                           ),
                                           child: _isLoading
                                               ? const SizedBox(
@@ -295,31 +348,62 @@ class _LoginScreenState extends State<LoginScreen>
                                                 ),
                                         ),
                                       ),
+                                      const SizedBox(height: 10),
+                                      SizedBox(
+                                        width: double.infinity,
+                                        height: 42,
+                                        child: OutlinedButton.icon(
+                                          onPressed:
+                                              _googleLoading ? null : _loginWithGoogle,
+                                          style: OutlinedButton.styleFrom(
+                                            padding: const EdgeInsets.symmetric(
+                                                horizontal: 12, vertical: 10),
+                                            side: const BorderSide(color: AppColors.accentBlue),
+                                            shape: RoundedRectangleBorder(
+                                              borderRadius: BorderRadius.circular(10),
+                                            ),
+                                          ),
+                                          icon: _googleLoading
+                                              ? const SizedBox(
+                                                  width: 18,
+                                                  height: 18,
+                                                  child: CircularProgressIndicator(
+                                                    strokeWidth: 2,
+                                                    color: AppColors.accentBlue,
+                                                  ),
+                                                )
+                                              : const Icon(Icons.g_mobiledata, color: AppColors.accentBlue, size: 26),
+                                          label: Text(
+                                            _googleLoading ? 'Signing in...' : 'Continue with Google',
+                                            style: GoogleFonts.poppins(
+                                              fontSize: 13,
+                                              fontWeight: FontWeight.w600,
+                                              color: AppColors.accentBlue,
+                                            ),
+                                          ),
+                                        ),
+                                      ),
                                     ],
                                   ),
                                 ),
                                 const SizedBox(height: 12),
                                 Text(
-                                  '© ${DateTime.now().year} JollyBaba',
+                                  ' ${DateTime.now().year} JollyBaba',
                                   style: GoogleFonts.poppins(
                                     fontSize: 11,
-                                    color: Colors.black38,
                                   ),
                                 ),
                               ],
                             ),
                           ),
                         ),
-                      ),
-                    ),
-                  );
+                    );
                 },
               ),
             ),
           ),
         ),
-      ),
-    );
+      );
   }
 }
 

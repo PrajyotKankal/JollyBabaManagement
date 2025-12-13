@@ -1,16 +1,14 @@
 // lib/screens/widgets/repair_details_card.dart
 
-import 'dart:io';
-
 import 'package:flutter/material.dart';
 import 'package:get/get.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:flutter_animate/flutter_animate.dart';
 import 'package:intl/intl.dart';
-import 'package:url_launcher/url_launcher.dart';
 import 'package:font_awesome_flutter/font_awesome_flutter.dart';
 
 import '../ticket_details_controller.dart';
+import '../../utils/whatsapp_launcher_mobile.dart' if (dart.library.html) '../../utils/whatsapp_launcher_web.dart';
 
 class RepairDetailsCard extends StatelessWidget {
   final TicketDetailsController controller;
@@ -31,6 +29,7 @@ class RepairDetailsCard extends StatelessWidget {
     final estimatedCost = (ticket["estimated_cost"] ?? "").toString();
     final status = (ticket["status"] ?? "").toString().toLowerCase().trim();
     final bool isCancelled = status == 'cancelled';
+    final bool isPending = status == 'pending';
     final bool canSendInvoice = status != 'pending' && !isCancelled;
 
     return _glassCard(
@@ -43,6 +42,38 @@ class RepairDetailsCard extends StatelessWidget {
           _detailRow("Estimated Cost",
               estimatedCost.isNotEmpty ? "₹ $estimatedCost" : "-"),
           _detailRow("Lock Code", ticket["lock_code"]?.toString() ?? '-'),
+          if (isPending && controller.canAssignToMe)
+            Padding(
+              padding: const EdgeInsets.only(top: 12, bottom: 8),
+              child: Obx(() {
+                if (controller.isAssigning.value) {
+                  return const Center(child: CircularProgressIndicator());
+                }
+                return SizedBox(
+                  width: double.infinity,
+                  child: ElevatedButton.icon(
+                    onPressed: controller.assignToMe,
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: const Color(0xFF6D5DF6),
+                      foregroundColor: Colors.white,
+                      padding: const EdgeInsets.symmetric(vertical: 14),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                      elevation: 0,
+                    ),
+                    icon: const Icon(Icons.person_add_alt_1, size: 18),
+                    label: Text(
+                      'Assign to Me',
+                      style: GoogleFonts.poppins(
+                        fontWeight: FontWeight.w600,
+                        fontSize: 14,
+                      ),
+                    ),
+                  ),
+                );
+              }),
+            ),
           const SizedBox(height: 12),
           Text(
             "Issue Description:",
@@ -112,14 +143,20 @@ class RepairDetailsCard extends StatelessWidget {
                           // Message content depends on status
                           String name = customerName.isNotEmpty ? customerName : 'Customer';
                           String model = deviceModel.isNotEmpty ? deviceModel : 'your device';
+                          String issue = (ticket["issue_description"]?.toString().trim().isNotEmpty ?? false)
+                              ? ticket["issue_description"].toString().trim()
+                              : 'Not specified';
+                          String price = estimatedCost.isNotEmpty ? '₹ $estimatedCost' : '₹ —';
                           String message;
                           if (status == 'pending') {
                             message = '''
 👋 Hello $name!
 
-📱 We’ve received your *$model* safely at our service center.
-🧑‍🔧 Our technicians have started the repair process and are working on it with care.
-🔔 We’ll notify you as soon as your device is ready for delivery.
+📱 Device: *$model*
+📝 Issue Description: *$issue*
+💰 Estimated Price: *$price*
+
+We’ve received your device safely and repairs have begun. We’ll notify you as soon as it’s ready for delivery.
 
 Thank you for choosing *Team JollyBaba* 💼
 '''.trim();
@@ -127,7 +164,11 @@ Thank you for choosing *Team JollyBaba* 💼
                             message = '''
 🎉 Hi $name, good news!
 
-Your *$model* has been successfully repaired ✅
+📱 Device: *$model*
+⚠️ Issue resolved: *$issue*
+💰 Final Price: *$price*
+
+Your device has been successfully repaired ✅
 You can now collect it from our store 🏬 or wait for delivery as arranged 🚚
 
 Thank you for trusting *Team JollyBaba* 💼
@@ -136,8 +177,12 @@ Thank you for trusting *Team JollyBaba* 💼
                             message = '''
 💙 Hi $name,
 
+📱 Device: *$model*
+⚠️ Issue fixed: *$issue*
+💰 Amount Paid: *$price*
+
 Thank you for choosing *JollyBaba!* 🙏
-We hope your *$model* is working perfectly and you’re happy with our service 💫
+We hope everything is working perfectly and you’re happy with our service 💫
 
 Your trust means a lot to us — we truly appreciate it!
 
@@ -226,55 +271,15 @@ We’ll keep you updated on the progress.
   }
 
   // ---------------- WhatsApp launcher helper ----------------
-  /// Tries multiple fallbacks to open WhatsApp or WhatsApp Business.
-  /// Order:
-  ///  1) Android intent -> com.whatsapp.w4b (WhatsApp Business)
-  ///  2) Android intent -> com.whatsapp (WhatsApp)
-  ///  3) whatsapp:// URL scheme (generic)
-  ///  4) https://wa.me/ (browser fallback)
+  /// Opens WhatsApp with message using platform-specific implementation
   Future<void> _openWhatsApp(String phone, String message) async {
-    final encoded = Uri.encodeComponent(message);
-
-    // Android intent URIs (works on many Android devices)
-    final intentBusiness =
-        Uri.parse("intent://send?phone=91$phone&text=$encoded#Intent;package=com.whatsapp.w4b;scheme=whatsapp;end");
-    final intentWhatsApp =
-        Uri.parse("intent://send?phone=91$phone&text=$encoded#Intent;package=com.whatsapp;scheme=whatsapp;end");
-
-    // generic URL scheme
-    final scheme = Uri.parse("whatsapp://send?phone=91$phone&text=$encoded");
-
-    // browser fallback
-    final waMe = Uri.parse("https://wa.me/91$phone?text=$encoded");
-
     try {
-      // 1) Intent -> WhatsApp Business
-      if (Platform.isAndroid && await canLaunchUrl(intentBusiness)) {
-        await launchUrl(intentBusiness, mode: LaunchMode.externalApplication);
-        return;
+      final success = await openWhatsAppPlatform(phone, message);
+      
+      if (!success) {
+        Get.snackbar("Error", "WhatsApp (or WhatsApp Business) is not installed on this device.",
+            backgroundColor: Colors.redAccent.withOpacity(0.9), colorText: Colors.white);
       }
-
-      // 2) Intent -> WhatsApp
-      if (Platform.isAndroid && await canLaunchUrl(intentWhatsApp)) {
-        await launchUrl(intentWhatsApp, mode: LaunchMode.externalApplication);
-        return;
-      }
-
-      // 3) generic whatsapp scheme
-      if (await canLaunchUrl(scheme)) {
-        await launchUrl(scheme, mode: LaunchMode.externalApplication);
-        return;
-      }
-
-      // 4) browser fallback (wa.me)
-      if (await canLaunchUrl(waMe)) {
-        await launchUrl(waMe, mode: LaunchMode.externalApplication);
-        return;
-      }
-
-      // Nothing worked
-      Get.snackbar("Error", "WhatsApp (or WhatsApp Business) is not installed on this device.",
-          backgroundColor: Colors.redAccent.withOpacity(0.9), colorText: Colors.white);
     } catch (_) {
       Get.snackbar('WhatsApp', 'No handler available to open WhatsApp.', snackPosition: SnackPosition.BOTTOM);
     }

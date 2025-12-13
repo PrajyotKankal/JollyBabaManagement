@@ -1,6 +1,7 @@
 // lib/screens/create_ticket_screen.dart
-import 'dart:io';
+import 'dart:typed_data';
 import 'dart:ui';
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:flutter_animate/flutter_animate.dart';
@@ -10,6 +11,9 @@ import 'package:mobile_scanner/mobile_scanner.dart';
 
 import '../services/ticket_service.dart';
 import '../services/auth_service.dart';
+
+// Platform-specific upload helpers
+import 'create_ticket_mobile.dart' if (dart.library.html) 'create_ticket_web.dart';
 
 class CreateTicketScreen extends StatefulWidget {
   const CreateTicketScreen({super.key});
@@ -268,15 +272,6 @@ class _CreateTicketScreenState extends State<CreateTicketScreen>
     try {
       // Upload image first if present
       if (selectedImage?.path.isNotEmpty == true) {
-        final localPath = selectedImage!.path;
-        final file = File(localPath);
-        if (!file.existsSync()) {
-          Get.snackbar("File Error", "Selected image not found on disk.",
-              backgroundColor: Colors.redAccent.withValues(alpha: 0.1), colorText: Colors.black87);
-          setState(() => isSubmitting = false);
-          return;
-        }
-
         // show upload snackbar
         if (Get.isSnackbarOpen != true) {
           Get.snackbar("Uploading", "Uploading image...", showProgressIndicator: true, isDismissible: false, snackPosition: SnackPosition.BOTTOM);
@@ -284,7 +279,12 @@ class _CreateTicketScreenState extends State<CreateTicketScreen>
 
         dynamic uploaded;
         try {
-          uploaded = await TicketService.uploadFile(file);
+          // Use platform-specific upload helper
+          if (kIsWeb) {
+            uploaded = await uploadImageWeb(selectedImage!);
+          } else {
+            uploaded = await uploadImageMobile(selectedImage!);
+          }
         } catch (e) {
           if (Get.isSnackbarOpen == true) Get.back();
           Get.snackbar("Upload Error", "Failed to upload image: $e",
@@ -662,7 +662,21 @@ class _CreateTicketScreenState extends State<CreateTicketScreen>
             if (selectedImage != null)
               Padding(
                 padding: const EdgeInsets.only(top: 12),
-                child: ClipRRect(borderRadius: BorderRadius.circular(12), child: Image.file(File(selectedImage!.path), height: 140, fit: BoxFit.cover)),
+                child: ClipRRect(
+                  borderRadius: BorderRadius.circular(12),
+                  child: FutureBuilder<Widget>(
+                    future: _buildImagePreview(),
+                    builder: (context, snapshot) {
+                      if (snapshot.hasData) {
+                        return snapshot.data!;
+                      }
+                      return const SizedBox(
+                        height: 140,
+                        child: Center(child: CircularProgressIndicator()),
+                      );
+                    },
+                  ),
+                ),
               ),
             const SizedBox(height: 8),
           ],
@@ -740,6 +754,20 @@ class _CreateTicketScreenState extends State<CreateTicketScreen>
         enabledBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(10), borderSide: const BorderSide(color: Color(0xFFE3E6EF), width: 1.2)),
         focusedBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(10), borderSide: const BorderSide(color: Color(0xFF6D5DF6), width: 1.5)),
       ),
+    );
+  }
+
+  Future<Widget> _buildImagePreview() async {
+    if (selectedImage == null) {
+      return const SizedBox.shrink();
+    }
+
+    // Always use Image.memory for both platforms (works everywhere)
+    final bytes = await selectedImage!.readAsBytes();
+    return Image.memory(
+      bytes,
+      height: 140,
+      fit: BoxFit.cover,
     );
   }
 

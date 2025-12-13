@@ -3,6 +3,7 @@ import 'package:get/get.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:flutter_animate/flutter_animate.dart';
 import '../services/ticket_service.dart';
+import '../utils/responsive_helper.dart';
 import 'ticket_details_screen.dart';
 
 class TicketListScreen extends StatefulWidget {
@@ -35,6 +36,9 @@ class _TicketListScreenState extends State<TicketListScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final deviceType = ResponsiveHelper.getDeviceType(context);
+    final responsivePadding = deviceType == DeviceType.mobile ? 12.0 : deviceType == DeviceType.tablet ? 16.0 : 20.0;
+    
     return Scaffold(
       backgroundColor: const Color(0xFFF5F7FF),
       appBar: AppBar(
@@ -67,11 +71,11 @@ class _TicketListScreenState extends State<TicketListScreen> {
                     ),
                   )
                 : ListView.builder(
-                    padding: const EdgeInsets.all(16),
+                    padding: EdgeInsets.all(responsivePadding),
                     itemCount: tickets.length,
                     itemBuilder: (context, index) {
                       final ticket = tickets[index];
-                      return _ticketCard(ticket)
+                      return _ticketCard(ticket, deviceType)
                           .animate()
                           .fadeIn(duration: 350.ms)
                           .slideY(begin: 0.1);
@@ -81,7 +85,11 @@ class _TicketListScreenState extends State<TicketListScreen> {
     );
   }
 
-  Widget _ticketCard(Map<String, dynamic> ticket) {
+  Widget _ticketCard(Map<String, dynamic> ticket, DeviceType deviceType) {
+    final cardPadding = deviceType == DeviceType.mobile ? 12.0 : 16.0;
+    final cardMargin = deviceType == DeviceType.mobile ? 10.0 : 14.0;
+    final titleFontSize = deviceType == DeviceType.mobile ? 14.0 : 15.0;
+    
     return GestureDetector(
       onTap: () async {
         // 👇 open details page with smooth transition
@@ -95,8 +103,8 @@ class _TicketListScreenState extends State<TicketListScreen> {
         if (result == true) _fetchTickets();
       },
       child: Container(
-        margin: const EdgeInsets.only(bottom: 14),
-        padding: const EdgeInsets.all(16),
+        margin: EdgeInsets.only(bottom: cardMargin),
+        padding: EdgeInsets.all(cardPadding),
         decoration: BoxDecoration(
           borderRadius: BorderRadius.circular(16),
           gradient: LinearGradient(
@@ -131,29 +139,34 @@ class _TicketListScreenState extends State<TicketListScreen> {
                     style: GoogleFonts.poppins(
                       fontWeight: FontWeight.w600,
                       color: const Color(0xFF2A2E45),
-                      fontSize: 15,
+                      fontSize: titleFontSize,
                     ),
                     overflow: TextOverflow.ellipsis,
+                    maxLines: 1,
                   ),
                   const SizedBox(height: 4),
                   Text(
                     ticket["device_model"] ?? "Unknown Device",
                     style: GoogleFonts.poppins(
                       color: Colors.black54,
-                      fontSize: 13,
+                      fontSize: deviceType == DeviceType.mobile ? 12.0 : 13.0,
                     ),
                     overflow: TextOverflow.ellipsis,
+                    maxLines: 1,
                   ),
                   const SizedBox(height: 6),
                   Row(
                     children: [
-                      const Icon(Icons.phone, size: 14, color: Colors.grey),
+                      Icon(Icons.phone, size: deviceType == DeviceType.mobile ? 12 : 14, color: Colors.grey),
                       const SizedBox(width: 4),
-                      Text(
-                        ticket["mobile_number"] ?? "-",
-                        style: GoogleFonts.poppins(
-                          color: Colors.black45,
-                          fontSize: 12,
+                      Expanded(
+                        child: Text(
+                          ticket["mobile_number"] ?? "-",
+                          style: GoogleFonts.poppins(
+                            color: Colors.black45,
+                            fontSize: deviceType == DeviceType.mobile ? 11.0 : 12.0,
+                          ),
+                          overflow: TextOverflow.ellipsis,
                         ),
                       ),
                     ],

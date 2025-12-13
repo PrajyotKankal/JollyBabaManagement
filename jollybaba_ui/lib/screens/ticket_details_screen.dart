@@ -6,6 +6,7 @@ import 'package:google_fonts/google_fonts.dart';
 import 'package:flutter_animate/flutter_animate.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'package:intl/intl.dart';
+import '../utils/whatsapp_launcher_mobile.dart' if (dart.library.html) '../utils/whatsapp_launcher_web.dart';
 
 import 'ticket_details_controller.dart';
 import 'widgets/customer_info_card.dart';
@@ -52,30 +53,13 @@ class _TicketDetailsScreenState extends State<TicketDetailsScreen> {
       return;
     }
 
-    final encodedText = Uri.encodeComponent(message);
-
-    // 1) Try native scheme first
-    final native = Uri.parse('whatsapp://send?phone=$normalized&text=$encodedText');
     try {
-      if (await canLaunchUrl(native)) {
-        final ok = await launchUrl(native, mode: LaunchMode.externalApplication);
-        if (ok) return;
+      final success = await openWhatsAppPlatform(normalized, message);
+      
+      if (!success) {
+        Get.snackbar('WhatsApp', 'WhatsApp is not available. Please install it first.', 
+            snackPosition: SnackPosition.BOTTOM);
       }
-    } catch (_) {}
-
-    // 2) Try https wa.me fallback (opens in browser/WhatsApp)
-    final waMe = Uri.parse('https://wa.me/$normalized?text=$encodedText');
-    try {
-      if (await canLaunchUrl(waMe)) {
-        final ok = await launchUrl(waMe, mode: LaunchMode.externalApplication);
-        if (ok) return;
-      }
-    } catch (_) {}
-
-    // 3) Fallback: open Play Store WhatsApp page
-    final playStore = Uri.parse('https://play.google.com/store/apps/details?id=com.whatsapp');
-    try {
-      await launchUrl(playStore, mode: LaunchMode.externalApplication);
     } catch (_) {
       Get.snackbar('WhatsApp', 'No handler available to open WhatsApp.', snackPosition: SnackPosition.BOTTOM);
     }
