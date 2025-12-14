@@ -12,6 +12,7 @@ import 'dart:html' as html show AnchorElement, Blob, Url;
 
 import '../services/ticket_service.dart';
 import '../services/khatabook_service.dart';
+import '../services/inventory_service.dart';
 import '../services/auth_service.dart';
 import '../utils/responsive_helper.dart';
 import 'excel_view_screen.dart';
