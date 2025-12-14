@@ -20,6 +20,8 @@ import '../widgets/confirm_dialog.dart';
 import '../widgets/inventory_sidebar.dart';
 import '../widgets/inventory_stats_header.dart';
 import '../widgets/pill_nav_bar.dart';
+import '../widgets/web_barcode_scanner.dart';
+import 'package:flutter/foundation.dart' show kIsWeb;
 
 class InventoryManagementScreen extends StatefulWidget {
   final int? initialIndex; // allow external navigation to open specific tab (e.g., List)
@@ -1838,6 +1840,39 @@ class _InventoryManagementScreenState extends State<InventoryManagementScreen> {
 
   void _startImeiScan({TextEditingController? targetController, bool triggerSellLookup = true}) {
     if (_isScanning) return;
+    
+    // On web, use WebBarcodeScanner with html5-qrcode
+    if (kIsWeb) {
+      setState(() => _isScanning = true);
+      WebBarcodeScanner.showScanner(
+        onSuccess: (String code) {
+          final normalized = code.replaceAll(RegExp(r'[^0-9]'), '');
+          if (_isValidImeiLength(normalized)) {
+            _applyScannedImei(normalized, controller: targetController, triggerSellLookup: triggerSellLookup);
+          } else {
+            Get.snackbar(
+              'IMEI Scan',
+              'Detected code is not a valid IMEI (needs 14-16 digits).',
+              snackPosition: SnackPosition.BOTTOM,
+            );
+          }
+          if (mounted) setState(() => _isScanning = false);
+        },
+        onError: (String error) {
+          Get.snackbar(
+            'Scanner Error',
+            error,
+            snackPosition: SnackPosition.BOTTOM,
+            backgroundColor: Colors.redAccent.withOpacity(0.9),
+            colorText: Colors.white,
+          );
+          if (mounted) setState(() => _isScanning = false);
+        },
+      );
+      return;
+    }
+    
+    // Mobile: use MobileScanner
     final detectionHits = <String, int>{};
     var invalidShown = false;
     const defaultHitThreshold = 2;

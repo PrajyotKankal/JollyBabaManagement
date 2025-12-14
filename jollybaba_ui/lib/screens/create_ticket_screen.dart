@@ -15,6 +15,9 @@ import '../services/auth_service.dart';
 // Platform-specific upload helpers
 import 'create_ticket_mobile.dart' if (dart.library.html) 'create_ticket_web.dart';
 
+// Web barcode scanner
+import '../widgets/web_barcode_scanner.dart';
+
 class CreateTicketScreen extends StatefulWidget {
   const CreateTicketScreen({super.key});
 
@@ -773,6 +776,39 @@ class _CreateTicketScreenState extends State<CreateTicketScreen>
 
   void _startImeiScan() {
     if (_isScanning) return;
+    
+    // On web, use WebBarcodeScanner with html5-qrcode
+    if (kIsWeb) {
+      setState(() => _isScanning = true);
+      WebBarcodeScanner.showScanner(
+        onSuccess: (String code) {
+          final normalized = code.replaceAll(RegExp(r'[^0-9]'), '');
+          if (_isValidImeiLength(normalized)) {
+            _applyScannedImei(normalized);
+          } else {
+            Get.snackbar(
+              'IMEI Scan',
+              'Detected code is not a valid IMEI (needs 14-16 digits).',
+              snackPosition: SnackPosition.BOTTOM,
+            );
+          }
+          if (mounted) setState(() => _isScanning = false);
+        },
+        onError: (String error) {
+          Get.snackbar(
+            'Scanner Error',
+            error,
+            snackPosition: SnackPosition.BOTTOM,
+            backgroundColor: Colors.redAccent.withOpacity(0.9),
+            colorText: Colors.white,
+          );
+          if (mounted) setState(() => _isScanning = false);
+        },
+      );
+      return;
+    }
+    
+    // Mobile: use MobileScanner
     final detectionHits = <String, int>{};
     var invalidShown = false;
     const defaultHitThreshold = 2;
