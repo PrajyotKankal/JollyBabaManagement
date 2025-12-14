@@ -36,11 +36,20 @@ class _SplashScreenState extends State<SplashScreen>
 
     _controller.forward();
 
-    // Start splash, perform auth check in background
-    Future.delayed(const Duration(seconds: 3), _bootstrap);
+    // Start auth check after minimal animation time (1.5 seconds)
+    // Also set a safety timeout in case everything hangs
+    Future.delayed(const Duration(milliseconds: 1500), _bootstrap);
+    
+    // Safety net: if still on splash after 6 seconds, force navigate to login
+    Future.delayed(const Duration(seconds: 6), () {
+      if (mounted && ModalRoute.of(context)?.isCurrent == true) {
+        debugPrint('⚠️ Splash safety timeout - forcing navigation to login');
+        _navigateToRoute('/login');
+      }
+    });
   }
 
-  /// 🧠 Handles token check and navigation
+  /// 🧠 Handles token check and navigation - OPTIMIZED
   Future<void> _bootstrap() async {
     try {
       final token = await _auth.getToken();
@@ -49,17 +58,42 @@ class _SplashScreenState extends State<SplashScreen>
         return;
       }
 
-      final user = await _auth.me();
-      final role = (user['role'] ?? 'technician').toString().toLowerCase();
+      // First try to use stored user data (instant, no network)
+      final storedUser = await _auth.getStoredUser();
+      if (storedUser != null && storedUser['role'] != null) {
+        final role = storedUser['role'].toString().toLowerCase();
+        if (role == 'admin') {
+          _navigateToRoute('/admin');
+        } else {
+          _navigateToRoute('/tech');
+        }
+        return;
+      }
 
-      if (role == 'admin') {
-        _navigateToRoute('/admin');
-      } else {
-        _navigateToRoute('/tech');
+      // Only make API call if no stored user, with timeout
+      try {
+        final user = await _auth.me().timeout(
+          const Duration(seconds: 3),
+          onTimeout: () {
+            debugPrint('⚠️ Auth me() timed out - using default route');
+            throw Exception('Timeout');
+          },
+        );
+        final role = (user['role'] ?? 'technician').toString().toLowerCase();
+
+        if (role == 'admin') {
+          _navigateToRoute('/admin');
+        } else {
+          _navigateToRoute('/tech');
+        }
+      } catch (e) {
+        // If API fails, go to login but don't clear stored credentials
+        debugPrint('⚠️ Bootstrap API error: $e - navigating to login');
+        _navigateToRoute('/login');
       }
     } catch (e) {
       // If something fails (network, 401, etc.), go to Login but keep stored session
-      // so the user is not force-logged-out from storage.
+      debugPrint('⚠️ Bootstrap error: $e');
       _navigateToRoute('/login');
     }
   }
