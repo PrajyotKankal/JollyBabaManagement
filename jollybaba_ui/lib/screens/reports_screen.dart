@@ -1,5 +1,6 @@
 // lib/screens/reports_screen.dart
 // Reports section with sidebar navigation - Premium UI with stats, filters, shimmer
+// Version: 2024-12-15.1 - Fixed InventoryService import for editable Khatabook
 
 import 'package:flutter/foundation.dart' show kDebugMode;
 import 'package:flutter/material.dart';
