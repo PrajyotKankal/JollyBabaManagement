@@ -1,5 +1,4 @@
 import 'package:flutter/material.dart';
-import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:get/get.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
@@ -21,39 +20,6 @@ import 'screens/khatabook_screen.dart';
 import 'screens/technician_management_screen.dart';
 import 'screens/about_app_screen.dart';
 
-/// Known routes that should be preserved on refresh
-const Set<String> _knownRoutes = {
-  '/splash',
-  '/login',
-  '/admin',
-  '/tech',
-  '/settings',
-  '/success',
-  '/inventory',
-  '/khatabook',
-  '/technicians',
-  '/about',
-};
-
-/// Get the initial route based on current URL (for web refresh support)
-String _getInitialRoute() {
-  if (kIsWeb) {
-    try {
-      // Get the current path from the browser URL
-      final uri = Uri.base;
-      final path = uri.path.isEmpty || uri.path == '/' ? '/splash' : uri.path;
-      
-      // If it's a known route, use it; otherwise go to splash for re-auth
-      if (_knownRoutes.contains(path)) {
-        return path;
-      }
-    } catch (e) {
-      debugPrint('⚠️ Error getting initial route: $e');
-    }
-  }
-  return '/splash';
-}
-
 Future<void> main() async {
   // Ensure Flutter bindings & async setup
   WidgetsFlutterBinding.ensureInitialized();
@@ -69,17 +35,11 @@ Future<void> main() async {
     debugPrint("⚠️ AuthService init failed or timed out: $e");
   }
 
-  // Get initial route based on current URL
-  final initialRoute = _getInitialRoute();
-  debugPrint('🚀 Starting app with initial route: $initialRoute');
-
-  runApp(JollyBabaApp(initialRoute: initialRoute));
+  runApp(const JollyBabaApp());
 }
 
 class JollyBabaApp extends StatelessWidget {
-  final String initialRoute;
-  
-  const JollyBabaApp({super.key, required this.initialRoute});
+  const JollyBabaApp({super.key});
 
   @override
   Widget build(BuildContext context) {
@@ -106,8 +66,8 @@ class JollyBabaApp extends StatelessWidget {
         Locale('en', 'US'),
       ],
 
-      // 🟣 Start from the detected initial route (preserves URL on refresh)
-      initialRoute: initialRoute,
+      // 🟣 Start from Splash Screen
+      initialRoute: '/splash',
 
       // 🧭 Define all GetX routes for navigation
       getPages: [
@@ -138,4 +98,3 @@ class JollyBabaApp extends StatelessWidget {
     );
   }
 }
-
