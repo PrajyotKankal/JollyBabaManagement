@@ -1,23 +1,30 @@
 {
-    "name": "JollyBaba",
+    "name": "JollyBaba - Mobile Repairing System",
     "short_name": "JollyBaba",
     "start_url": ".",
+    "scope": "/",
     "display": "standalone",
+    "display_override": ["standalone", "minimal-ui"],
     "background_color": "#F8FAFF",
-    "theme_color": "#7B61FF",
-    "description": "JollyBaba Management System",
+    "theme_color": "#6D5DF6",
+    "description": "Professional mobile repairing management system for technicians and administrators",
     "orientation": "any",
     "prefer_related_applications": false,
+    "categories": ["business", "productivity", "utilities"],
+    "lang": "en-US",
+    "dir": "ltr",
     "icons": [
         {
             "src": "icons/Icon-192.png",
             "sizes": "192x192",
-            "type": "image/png"
+            "type": "image/png",
+            "purpose": "any"
         },
         {
             "src": "icons/Icon-512.png",
             "sizes": "512x512",
-            "type": "image/png"
+            "type": "image/png",
+            "purpose": "any"
         },
         {
             "src": "icons/Icon-maskable-192.png",
@@ -30,6 +37,22 @@
             "sizes": "512x512",
             "type": "image/png",
             "purpose": "maskable"
+        }
+    ],
+    "shortcuts": [
+        {
+            "name": "Create Ticket",
+            "short_name": "New Ticket",
+            "description": "Create a new repair ticket",
+            "url": "/create",
+            "icons": [{ "src": "icons/Icon-192.png", "sizes": "192x192" }]
+        },
+        {
+            "name": "View Reports",
+            "short_name": "Reports",
+            "description": "View ticket reports",
+            "url": "/reports",
+            "icons": [{ "src": "icons/Icon-192.png", "sizes": "192x192" }]
         }
     ]
 }
