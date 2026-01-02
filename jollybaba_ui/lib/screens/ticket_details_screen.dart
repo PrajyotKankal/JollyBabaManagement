@@ -13,6 +13,7 @@ import 'widgets/customer_info_card.dart';
 import 'widgets/repair_details_card.dart';
 import 'widgets/technician_notes_section.dart';
 import 'widgets/save_button.dart';
+import 'widgets/edit_ticket_sheet.dart';
 
 class TicketDetailsScreen extends StatefulWidget {
   final Map<String, dynamic> ticket;
@@ -407,6 +408,34 @@ class _TicketDetailsScreenState extends State<TicketDetailsScreen> {
             onPressed: () => Get.back(result: controller.ticket),
           ),
           actions: [
+            // Edit button - opens EditTicketSheet for modifying ticket details
+            IconButton(
+              icon: Container(
+                padding: const EdgeInsets.all(8),
+                decoration: BoxDecoration(
+                  color: const Color(0xFF6D5DF6).withOpacity(0.1),
+                  borderRadius: BorderRadius.circular(10),
+                ),
+                child: const Icon(
+                  Icons.edit_outlined,
+                  color: Color(0xFF6D5DF6),
+                  size: 20,
+                ),
+              ),
+              onPressed: () async {
+                final result = await showModalBottomSheet<bool>(
+                  context: context,
+                  isScrollControlled: true,
+                  backgroundColor: Colors.transparent,
+                  builder: (_) => EditTicketSheet(controller: controller),
+                );
+                // Refresh the screen if edit was successful
+                if (result == true) {
+                  controller.update();
+                }
+              },
+              tooltip: 'Edit Ticket',
+            ),
             GetBuilder<TicketDetailsController>(
               tag: tag,
               builder: (_) => Padding(
