@@ -3,13 +3,15 @@
 // Version: 2024-12-15.1 - Fixed InventoryService import for editable Khatabook
 
 import 'package:flutter/foundation.dart' show kDebugMode;
+import 'dart:typed_data';
 import 'package:flutter/material.dart';
 import 'package:get/get.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:flutter_animate/flutter_animate.dart';
 import 'package:intl/intl.dart';
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:excel/excel.dart' as xls hide Border;
-import 'dart:html' as html show AnchorElement, Blob, Url;
+import '../utils/excel_download_stub.dart' if (dart.library.html) '../utils/excel_download_web.dart';
 
 import '../services/ticket_service.dart';
 import '../services/khatabook_service.dart';
@@ -1525,7 +1527,7 @@ class _ReportsScreenState extends State<ReportsScreen> {
     }
   }
   
-  void _downloadKhatabookExcel() {
+  Future<void> _downloadKhatabookExcel() async {
     if (_filteredKhatabook.isEmpty) {
       Get.snackbar('No Data', 'No entries to download', snackPosition: SnackPosition.BOTTOM);
       return;
@@ -1584,20 +1586,16 @@ class _ReportsScreenState extends State<ReportsScreen> {
       
       // Download
       final bytes = excel.encode();
-      if (bytes != null) {
-        final blob = html.Blob([bytes], 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
-        final url = html.Url.createObjectUrlFromBlob(blob);
+      if (bytes != null && kIsWeb) {
         final dateStr = DateFormat('yyyy-MM-dd').format(DateTime.now());
-        html.AnchorElement()
-          ..href = url
-          ..download = 'Khatabook_Report_$dateStr.xlsx'
-          ..click();
-        html.Url.revokeObjectUrl(url);
+        await downloadExcelBytes(Uint8List.fromList(bytes), 'Khatabook_Report_$dateStr.xlsx');
         
         Get.snackbar('Downloaded', 'Khatabook Excel exported successfully', 
           snackPosition: SnackPosition.BOTTOM,
           backgroundColor: Colors.green.shade100,
         );
+      } else if (bytes != null) {
+        Get.snackbar('Not Supported', 'Excel download is only available on web', snackPosition: SnackPosition.BOTTOM);
       }
     } catch (e) {
       if (kDebugMode) debugPrint('Khatabook Excel download error: $e');
@@ -1731,7 +1729,7 @@ class _ReportsScreenState extends State<ReportsScreen> {
     }
   }
   
-  void _downloadCustomersExcel() {
+  Future<void> _downloadCustomersExcel() async {
     if (_filteredCustomers.isEmpty) {
       Get.snackbar('No Data', 'No customers to download', snackPosition: SnackPosition.BOTTOM);
       return;
@@ -1788,20 +1786,16 @@ class _ReportsScreenState extends State<ReportsScreen> {
       
       // Download
       final bytes = excel.encode();
-      if (bytes != null) {
-        final blob = html.Blob([bytes], 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
-        final url = html.Url.createObjectUrlFromBlob(blob);
+      if (bytes != null && kIsWeb) {
         final dateStr = DateFormat('yyyy-MM-dd').format(DateTime.now());
-        html.AnchorElement()
-          ..href = url
-          ..download = 'Customers_Report_$dateStr.xlsx'
-          ..click();
-        html.Url.revokeObjectUrl(url);
+        await downloadExcelBytes(Uint8List.fromList(bytes), 'Customers_Report_$dateStr.xlsx');
         
         Get.snackbar('Downloaded', 'Customers Excel exported successfully', 
           snackPosition: SnackPosition.BOTTOM,
           backgroundColor: Colors.green.shade100,
         );
+      } else if (bytes != null) {
+        Get.snackbar('Not Supported', 'Excel download is only available on web', snackPosition: SnackPosition.BOTTOM);
       }
     } catch (e) {
       if (kDebugMode) debugPrint('Customers Excel download error: $e');
@@ -1809,7 +1803,7 @@ class _ReportsScreenState extends State<ReportsScreen> {
     }
   }
   
-  void _downloadTicketsExcel() {
+  Future<void> _downloadTicketsExcel() async {
     if (_filteredTickets.isEmpty) {
       Get.snackbar('No Data', 'No tickets to download', snackPosition: SnackPosition.BOTTOM);
       return;
@@ -1872,20 +1866,16 @@ class _ReportsScreenState extends State<ReportsScreen> {
       
       // Download
       final bytes = excel.encode();
-      if (bytes != null) {
-        final blob = html.Blob([bytes], 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
-        final url = html.Url.createObjectUrlFromBlob(blob);
+      if (bytes != null && kIsWeb) {
         final dateStr = DateFormat('yyyy-MM-dd').format(DateTime.now());
-        html.AnchorElement()
-          ..href = url
-          ..download = 'Tickets_Report_$dateStr.xlsx'
-          ..click();
-        html.Url.revokeObjectUrl(url);
+        await downloadExcelBytes(Uint8List.fromList(bytes), 'Tickets_Report_$dateStr.xlsx');
         
         Get.snackbar('Downloaded', 'Tickets Excel exported successfully', 
           snackPosition: SnackPosition.BOTTOM,
           backgroundColor: Colors.green.shade100,
         );
+      } else if (bytes != null) {
+        Get.snackbar('Not Supported', 'Excel download is only available on web', snackPosition: SnackPosition.BOTTOM);
       }
     } catch (e) {
       if (kDebugMode) debugPrint('Excel download error: $e');

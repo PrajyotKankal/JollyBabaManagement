@@ -69,7 +69,7 @@ class _LoginScreenState extends State<LoginScreen>
     try {
       final user = await _auth.login(
         email: _emailCtrl.text.trim(),
-        password: _passwordCtrl.text,
+        password: _passwordCtrl.text.trim(),
       );
 
       final role = (user['role'] ?? 'technician').toString().toLowerCase();

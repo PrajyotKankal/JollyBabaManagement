@@ -2,6 +2,7 @@
 // Admin-only Excel View - Premium Google Sheets style
 
 import 'dart:async';
+import 'dart:typed_data';
 import 'package:flutter/material.dart';
 import 'package:flutter/foundation.dart';
 import 'package:get/get.dart';
@@ -10,9 +11,7 @@ import 'package:intl/intl.dart';
 import 'package:excel/excel.dart' as xls hide Border;
 import 'package:flutter/services.dart';
 import '../services/inventory_service.dart';
-
-// For web download
-import 'dart:html' as html show AnchorElement, Blob, Url;
+import '../utils/excel_download_stub.dart' if (dart.library.html) '../utils/excel_download_web.dart';
 
 class ExcelViewScreen extends StatefulWidget {
   final bool embedded;
@@ -723,12 +722,11 @@ class _ExcelViewScreenState extends State<ExcelViewScreen> {
       final bytes = excel.encode();
       if (bytes == null) throw Exception('Failed to encode Excel');
       if (kIsWeb) {
-        final blob = html.Blob([Uint8List.fromList(bytes)], 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
-        final url = html.Url.createObjectUrlFromBlob(blob);
-        html.AnchorElement(href: url)..setAttribute('download', 'JollyBaba_Inventory$monthLabel.xlsx')..click();
-        html.Url.revokeObjectUrl(url);
+        await downloadExcelBytes(Uint8List.fromList(bytes), 'JollyBaba_Inventory$monthLabel.xlsx');
+        Get.snackbar('Downloaded', '${exportItems.length} items exported', snackPosition: SnackPosition.BOTTOM, backgroundColor: _primaryGreen, colorText: Colors.white);
+      } else {
+        Get.snackbar('Not Supported', 'Excel download is only available on web', snackPosition: SnackPosition.BOTTOM);
       }
-      Get.snackbar('✓ Downloaded', '${exportItems.length} items exported', snackPosition: SnackPosition.BOTTOM, backgroundColor: _primaryGreen, colorText: Colors.white);
     } catch (e) { Get.snackbar('Error', '$e', snackPosition: SnackPosition.BOTTOM); }
   }
   
