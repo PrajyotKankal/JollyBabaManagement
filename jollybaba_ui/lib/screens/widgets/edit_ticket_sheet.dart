@@ -149,7 +149,7 @@ class _EditTicketSheetState extends State<EditTicketSheet> {
     );
     setState(() => _submitting = false);
 
-    if (success && mounted) Navigator.of(context).pop(true);
+    if (success && mounted) Get.back(result: true);
   }
 
   @override
@@ -162,7 +162,7 @@ class _EditTicketSheetState extends State<EditTicketSheet> {
         centerTitle: true,
         leading: IconButton(
           icon: const Icon(Icons.close, color: Color(0xFF2A2E45)),
-          onPressed: () => Navigator.of(context).pop(),
+          onPressed: () => Get.back(),
         ),
         title: Text(
           'Edit Ticket',
