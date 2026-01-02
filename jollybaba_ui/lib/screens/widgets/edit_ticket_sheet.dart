@@ -154,102 +154,67 @@ class _EditTicketSheetState extends State<EditTicketSheet> {
 
   @override
   Widget build(BuildContext context) {
-    final viewInsets = MediaQuery.of(context).viewInsets.bottom;
-    return Padding(
-      padding: EdgeInsets.only(bottom: viewInsets),
-      child: DraggableScrollableSheet(
-        initialChildSize: 0.9,
-        minChildSize: 0.6,
-        maxChildSize: 0.95,
-        expand: false,
-        builder: (_, controller) => Container(
-          decoration: const BoxDecoration(
-            color: Colors.white,
-            borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+    return Scaffold(
+      backgroundColor: const Color(0xFFF8FAFF),
+      appBar: AppBar(
+        backgroundColor: Colors.white,
+        elevation: 0.5,
+        centerTitle: true,
+        leading: IconButton(
+          icon: const Icon(Icons.close, color: Color(0xFF2A2E45)),
+          onPressed: () => Navigator.of(context).pop(),
+        ),
+        title: Text(
+          'Edit Ticket',
+          style: GoogleFonts.poppins(
+            fontSize: 18,
+            fontWeight: FontWeight.w600,
+            color: const Color(0xFF2A2E45),
           ),
-          child: Column(
-            children: [
-              Padding(
-                padding: const EdgeInsets.symmetric(vertical: 12),
-                child: Container(
-                  width: 48,
-                  height: 5,
-                  decoration: BoxDecoration(
-                    color: Colors.black12,
-                    borderRadius: BorderRadius.circular(4),
-                  ),
+        ),
+      ),
+      body: SingleChildScrollView(
+        padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            _sectionTitle('Customer Information'),
+            _textField('Customer Name', _nameCtrl, required: true),
+            _textField('Mobile Number', _mobileCtrl, keyboard: TextInputType.phone),
+            _textField('Device Model', _deviceCtrl),
+            _textField('IMEI', _imeiCtrl),
+            _dateField('Receive Date', _receiveDateCtrl),
+            _dateField('Repair Date', _repairDateCtrl),
+            _multilineField('Issue Description', _issueCtrl),
+            const SizedBox(height: 12),
+            _sectionTitle('Repair Details'),
+            _textField('Assigned Technician', _assignedCtrl),
+            _textField('Assigned Technician Email', _assignedEmailCtrl,
+                keyboard: TextInputType.emailAddress),
+            _textField('Estimated Cost', _estimatedCostCtrl, keyboard: TextInputType.number),
+            _textField('Lock Code', _lockCodeCtrl),
+            const SizedBox(height: 80), // Space for FAB
+          ],
+        ),
+      ),
+      floatingActionButton: FloatingActionButton.extended(
+        onPressed: _submitting ? null : _handleSave,
+        backgroundColor: const Color(0xFF6D5DF6),
+        icon: _submitting
+            ? const SizedBox(
+                width: 20,
+                height: 20,
+                child: CircularProgressIndicator(
+                  strokeWidth: 2,
+                  color: Colors.white,
                 ),
-              ),
-              Text(
-                'Edit Ticket',
-                style: GoogleFonts.poppins(
-                  fontSize: 18,
-                  fontWeight: FontWeight.w600,
-                ),
-              ),
-              const SizedBox(height: 4),
-              Expanded(
-                child: SingleChildScrollView(
-                  controller: controller,
-                  padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 16),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      _sectionTitle('Customer Information'),
-                      _textField('Customer Name', _nameCtrl, required: true),
-                      _textField('Mobile Number', _mobileCtrl, keyboard: TextInputType.phone),
-                      _textField('Device Model', _deviceCtrl),
-                      _textField('IMEI', _imeiCtrl),
-                      _dateField('Receive Date', _receiveDateCtrl),
-                      _dateField('Repair Date', _repairDateCtrl),
-                      _multilineField('Issue Description', _issueCtrl),
-                      const SizedBox(height: 12),
-                      _sectionTitle('Repair Details'),
-                      _textField('Assigned Technician', _assignedCtrl),
-                      _textField('Assigned Technician Email', _assignedEmailCtrl,
-                          keyboard: TextInputType.emailAddress),
-                      _textField('Estimated Cost', _estimatedCostCtrl, keyboard: TextInputType.number),
-                      _textField('Lock Code', _lockCodeCtrl),
-                    ],
-                  ),
-                ),
-              ),
-              SafeArea(
-                top: false,
-                child: Padding(
-                  padding: const EdgeInsets.fromLTRB(20, 10, 20, 20),
-                  child: SizedBox(
-                    width: double.infinity,
-                    child: ElevatedButton(
-                      onPressed: _submitting ? null : _handleSave,
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: const Color(0xFF6D5DF6),
-                        padding: const EdgeInsets.symmetric(vertical: 14),
-                        shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(12),
-                        ),
-                      ),
-                      child: _submitting
-                          ? const SizedBox(
-                              width: 20,
-                              height: 20,
-                              child: CircularProgressIndicator(
-                                strokeWidth: 2,
-                                color: Colors.white,
-                              ),
-                            )
-                          : Text(
-                              'Save Changes',
-                              style: GoogleFonts.poppins(
-                                color: Colors.white,
-                                fontWeight: FontWeight.w600,
-                              ),
-                            ),
-                    ),
-                  ),
-                ),
-              ),
-            ],
+              )
+            : const Icon(Icons.save, color: Colors.white),
+        label: Text(
+          'Save Changes',
+          style: GoogleFonts.poppins(
+            color: Colors.white,
+            fontWeight: FontWeight.w600,
           ),
         ),
       ),

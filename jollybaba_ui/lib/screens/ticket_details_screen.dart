@@ -423,11 +423,10 @@ class _TicketDetailsScreenState extends State<TicketDetailsScreen> {
                 ),
               ),
               onPressed: () async {
-                final result = await showModalBottomSheet<bool>(
-                  context: context,
-                  isScrollControlled: true,
-                  backgroundColor: Colors.transparent,
-                  builder: (_) => EditTicketSheet(controller: controller),
+                final result = await Get.to<bool>(
+                  () => EditTicketSheet(controller: controller),
+                  transition: Transition.rightToLeft,
+                  duration: const Duration(milliseconds: 300),
                 );
                 // Refresh the screen if edit was successful
                 if (result == true) {
