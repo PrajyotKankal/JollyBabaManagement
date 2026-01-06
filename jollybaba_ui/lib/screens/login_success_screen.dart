@@ -3,8 +3,7 @@ import 'package:flutter_animate/flutter_animate.dart';
 import 'package:get/get.dart';
 import 'package:google_fonts/google_fonts.dart';
 
-import 'dashboard_screen.dart';
-import 'technician_dashboard_screen.dart';
+import '../services/auth_service.dart';
 
 class LoginSuccessScreen extends StatefulWidget {
   final String role; // "admin" or "technician"
@@ -17,22 +16,44 @@ class LoginSuccessScreen extends StatefulWidget {
 }
 
 class _LoginSuccessScreenState extends State<LoginSuccessScreen> {
+  String? _resolvedRole;
+  String? _displayName;
+  
   @override
   void initState() {
     super.initState();
-
+    _initializeAndNavigate();
+  }
+  
+  Future<void> _initializeAndNavigate() async {
+    // If role was passed, use it; otherwise fetch from stored user
+    String role = widget.role;
+    String? userName = widget.userName;
+    
+    if (role.isEmpty) {
+      final storedUser = await AuthService().getStoredUser();
+      role = (storedUser?['role'] ?? 'technician').toString().toLowerCase();
+      userName = storedUser?['name']?.toString();
+    }
+    
+    if (mounted) {
+      setState(() {
+        _resolvedRole = role.toLowerCase();
+        _displayName = userName;
+      });
+    }
+    
     // Auto redirect after short delay
-    Future.delayed(const Duration(seconds: 2), () {
-      if (widget.role.toLowerCase() == 'admin') {
-        Get.offAll(() => const DashboardScreen(),
-            transition: Transition.fadeIn,
-            duration: const Duration(milliseconds: 800));
-      } else {
-        Get.offAll(() => const TechnicianDashboardScreen(),
-            transition: Transition.fadeIn,
-            duration: const Duration(milliseconds: 800));
-      }
-    });
+    await Future.delayed(const Duration(seconds: 2));
+    
+    // Critical: Check mounted before navigation to prevent errors
+    if (!mounted) return;
+    
+    if (_resolvedRole == 'admin') {
+      Get.offAllNamed('/admin');
+    } else {
+      Get.offAllNamed('/tech');
+    }
   }
 
   @override
@@ -45,9 +66,11 @@ class _LoginSuccessScreenState extends State<LoginSuccessScreen> {
     final double fontSizeTitle = isMobile ? 22 : 28;
     final double fontSizeSubtitle = isMobile ? 14 : 16;
 
-    final displayName = widget.userName?.isNotEmpty == true
-        ? widget.userName!.split(' ').first
+    final displayName = (_displayName ?? widget.userName)?.isNotEmpty == true
+        ? (_displayName ?? widget.userName)!.split(' ').first
         : null;
+    
+    final roleForDisplay = _resolvedRole ?? widget.role;
 
     return Scaffold(
       body: Container(
@@ -198,7 +221,7 @@ class _LoginSuccessScreenState extends State<LoginSuccessScreen> {
 
                         // 🔄 Redirect hint
                         Text(
-                          widget.role.toLowerCase() == 'admin'
+                          roleForDisplay.toLowerCase() == 'admin'
                               ? "Redirecting to Admin Dashboard..."
                               : "Redirecting to Technician Dashboard...",
                           textAlign: TextAlign.center,

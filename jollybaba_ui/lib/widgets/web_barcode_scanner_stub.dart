@@ -5,6 +5,7 @@ class WebBarcodeScanner {
   static Future<void> showScanner({
     required Function(String) onSuccess,
     required Function(String) onError,
+    Function()? onCancel,
   }) async {
     // This should never be called on mobile since we check kIsWeb first
     onError('Web scanner not available on this platform');

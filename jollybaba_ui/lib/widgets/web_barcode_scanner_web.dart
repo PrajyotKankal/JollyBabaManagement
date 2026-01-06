@@ -7,6 +7,7 @@ class WebBarcodeScanner {
   static Future<void> showScanner({
     required Function(String) onSuccess,
     required Function(String) onError,
+    Function()? onCancel,
   }) async {
     try {
       final scannerId = 'qr-scanner-${DateTime.now().millisecondsSinceEpoch}';
@@ -81,6 +82,7 @@ class WebBarcodeScanner {
       // Close button handler
       closeButton.onClick.listen((_) {
         cleanup();
+        onCancel?.call();
       });
       
       // Scan success handler

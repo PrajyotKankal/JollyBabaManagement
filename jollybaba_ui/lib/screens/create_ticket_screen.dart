@@ -357,7 +357,26 @@ class _CreateTicketScreenState extends State<CreateTicketScreen>
         await Future.delayed(const Duration(seconds: 2));
         if (mounted) setState(() => isClosing = true);
         await Future.delayed(const Duration(milliseconds: 300));
-        if (mounted) Get.back(result: true);
+        if (mounted) {
+          // Try Get.back first, but add fallback if navigation stack is empty
+          try {
+            if (Get.previousRoute.isNotEmpty) {
+              Get.back(result: true);
+            } else {
+              // Fallback: navigate to dashboard if cannot go back
+              final storedUser = await AuthService().getStoredUser();
+              final role = (storedUser?['role'] ?? 'technician').toString().toLowerCase();
+              if (role == 'admin') {
+                Get.offAllNamed('/admin');
+              } else {
+                Get.offAllNamed('/tech');
+              }
+            }
+          } catch (e) {
+            // Fallback on any navigation error
+            Get.offAllNamed('/tech');
+          }
+        }
       } else {
         Get.snackbar("❌ Error", "Failed to create ticket. Please try again.",
             backgroundColor: Colors.redAccent.withValues(alpha: 0.1), colorText: Colors.black87);
@@ -802,6 +821,10 @@ class _CreateTicketScreenState extends State<CreateTicketScreen>
             backgroundColor: Colors.redAccent.withOpacity(0.9),
             colorText: Colors.white,
           );
+          if (mounted) setState(() => _isScanning = false);
+        },
+        onCancel: () {
+          // User closed scanner without scanning - reset state so they can scan again
           if (mounted) setState(() => _isScanning = false);
         },
       );

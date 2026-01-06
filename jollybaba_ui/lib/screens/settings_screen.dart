@@ -390,9 +390,7 @@ class _SettingsScreenState extends State<SettingsScreen>
                   duration: const Duration(seconds: 2),
                 );
                 await Future.delayed(const Duration(milliseconds: 800));
-                Get.offAll(() => const LoginScreen(),
-                    transition: Transition.fadeIn,
-                    duration: const Duration(milliseconds: 500));
+                Get.offAllNamed('/login');
               } catch (e) {
                 Get.snackbar(
                   'Error',

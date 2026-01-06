@@ -67,7 +67,7 @@ class _DashboardScreenState extends State<DashboardScreen>
 
     if (token == null) {
       if (!mounted) return;
-      Get.offAll(() => const LoginScreen());
+      Get.offAllNamed('/login');
       return;
     }
 
@@ -107,6 +107,7 @@ class _DashboardScreenState extends State<DashboardScreen>
     return ResponsiveWrapper(
       child: Scaffold(
         extendBody: true,
+        resizeToAvoidBottomInset: true,
         backgroundColor: const Color(0xFFF8FAFF),
         body: Stack(
           children: [

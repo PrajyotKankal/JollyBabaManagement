@@ -74,14 +74,8 @@ class _LoginScreenState extends State<LoginScreen>
 
       final role = (user['role'] ?? 'technician').toString().toLowerCase();
 
-      Get.offAll(
-        () => LoginSuccessScreen(
-          role: role,
-          userName: user['name'] ?? '',
-        ),
-        transition: Transition.fadeIn,
-        duration: const Duration(milliseconds: 400),
-      );
+      // Use named route for consistent navigation stack
+      Get.offAllNamed('/success');
     } on Exception catch (e) {
       final msg = e.toString().replaceAll('Exception: ', '');
       Get.snackbar(
@@ -140,14 +134,8 @@ class _LoginScreenState extends State<LoginScreen>
       final role = (user['role'] ?? 'technician').toString().toLowerCase();
 
       if (!mounted) return;
-      Get.offAll(
-        () => LoginSuccessScreen(
-          role: role,
-          userName: user['name'] ?? account?.displayName ?? '',
-        ),
-        transition: Transition.fadeIn,
-        duration: const Duration(milliseconds: 400),
-      );
+      // Use named route for consistent navigation stack
+      Get.offAllNamed('/success');
     } on Exception catch (e) {
       debugPrint('🔴 GOOGLE LOGIN ERROR: $e');
       final msg = e.toString().replaceAll('Exception: ', '');

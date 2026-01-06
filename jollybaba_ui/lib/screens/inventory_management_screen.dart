@@ -1868,6 +1868,10 @@ class _InventoryManagementScreenState extends State<InventoryManagementScreen> {
           );
           if (mounted) setState(() => _isScanning = false);
         },
+        onCancel: () {
+          // User closed scanner without scanning - reset state so they can scan again
+          if (mounted) setState(() => _isScanning = false);
+        },
       );
       return;
     }

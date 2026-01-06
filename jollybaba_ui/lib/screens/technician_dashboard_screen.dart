@@ -77,10 +77,7 @@ class _TechnicianDashboardScreenState extends State<TechnicianDashboardScreen>
       if (token == null) {
         // No token at all - go to login
         if (!mounted) return;
-        Navigator.of(context).pushAndRemoveUntil(
-          MaterialPageRoute(builder: (_) => const LoginScreen()),
-          (route) => false,
-        );
+        Get.offAllNamed('/login');
         return;
       }
 
@@ -162,10 +159,8 @@ class _TechnicianDashboardScreenState extends State<TechnicianDashboardScreen>
       if (kDebugMode) debugPrint('Logout failed: $e');
     }
     if (!mounted) return;
-    Navigator.of(context).pushAndRemoveUntil(
-      MaterialPageRoute(builder: (_) => const LoginScreen()),
-      (route) => false,
-    );
+    if (!mounted) return;
+    Get.offAllNamed('/login');
   }
 
   Widget _buildAvatarMenu() {
@@ -209,6 +204,7 @@ class _TechnicianDashboardScreenState extends State<TechnicianDashboardScreen>
   Widget build(BuildContext context) {
     return Scaffold(
       extendBody: true,
+      resizeToAvoidBottomInset: true,
       backgroundColor: const Color(0xFFF8FAFF),
       body: Stack(
         children: [

@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:ui';
 import 'package:flutter/material.dart';
 import 'package:flutter_animate/flutter_animate.dart';
@@ -19,6 +20,11 @@ class _SplashScreenState extends State<SplashScreen>
   late AnimationController _controller;
   late Animation<double> _fadeAnimation;
   final AuthService _auth = AuthService();
+  
+  // Cancellable timers to prevent navigation after dispose
+  Timer? _bootstrapTimer;
+  Timer? _safetyTimer;
+  bool _hasNavigated = false;
 
   @override
   void initState() {
@@ -37,12 +43,12 @@ class _SplashScreenState extends State<SplashScreen>
     _controller.forward();
 
     // Start auth check after minimal animation time (1.5 seconds)
-    // Also set a safety timeout in case everything hangs
-    Future.delayed(const Duration(milliseconds: 1500), _bootstrap);
+    // Using cancellable timers to prevent navigation after dispose
+    _bootstrapTimer = Timer(const Duration(milliseconds: 1500), _bootstrap);
     
     // Safety net: if still on splash after 6 seconds, force navigate to login
-    Future.delayed(const Duration(seconds: 6), () {
-      if (mounted && ModalRoute.of(context)?.isCurrent == true) {
+    _safetyTimer = Timer(const Duration(seconds: 6), () {
+      if (mounted && !_hasNavigated && ModalRoute.of(context)?.isCurrent == true) {
         debugPrint('⚠️ Splash safety timeout - forcing navigation to login');
         _navigateToRoute('/login');
       }
@@ -101,6 +107,13 @@ class _SplashScreenState extends State<SplashScreen>
   /// 🔄 Handles fade-out + navigation using NAMED ROUTES
   /// This fixes the /minified:h URL issue in production builds
   Future<void> _navigateToRoute(String routeName) async {
+    if (_hasNavigated) return; // Prevent double navigation
+    _hasNavigated = true;
+    
+    // Cancel timers to prevent further navigation attempts
+    _bootstrapTimer?.cancel();
+    _safetyTimer?.cancel();
+    
     await _controller.reverse();
     await Future.delayed(const Duration(milliseconds: 200));
     if (mounted) {
@@ -110,6 +123,8 @@ class _SplashScreenState extends State<SplashScreen>
 
   @override
   void dispose() {
+    _bootstrapTimer?.cancel();
+    _safetyTimer?.cancel();
     _controller.dispose();
     super.dispose();
   }
