@@ -611,9 +611,160 @@
     })();
   </script>
 
-  <!-- Service Worker Registration -->
+  <!-- PWA Update Notification Styles -->
+  <style>
+    #pwa-update-banner {
+      position: fixed;
+      bottom: 100px;
+      left: 50%;
+      transform: translateX(-50%) translateY(150%);
+      z-index: 99999;
+      background: linear-gradient(135deg, #6D5DF6 0%, #8A8EFF 100%);
+      color: white;
+      padding: 14px 24px;
+      border-radius: 16px;
+      box-shadow: 0 8px 32px rgba(109, 93, 246, 0.4), 0 4px 16px rgba(0, 0, 0, 0.15);
+      font-family: 'Poppins', -apple-system, BlinkMacSystemFont, sans-serif;
+      font-size: 14px;
+      font-weight: 500;
+      display: flex;
+      align-items: center;
+      gap: 16px;
+      cursor: pointer;
+      transition: transform 0.4s cubic-bezier(0.34, 1.56, 0.64, 1), opacity 0.3s ease;
+      opacity: 0;
+      backdrop-filter: blur(10px);
+      -webkit-backdrop-filter: blur(10px);
+      border: 1px solid rgba(255, 255, 255, 0.2);
+    }
+
+    #pwa-update-banner.show {
+      transform: translateX(-50%) translateY(0);
+      opacity: 1;
+    }
+
+    #pwa-update-banner:hover {
+      transform: translateX(-50%) translateY(-2px);
+      box-shadow: 0 12px 40px rgba(109, 93, 246, 0.5), 0 6px 20px rgba(0, 0, 0, 0.2);
+    }
+
+    #pwa-update-banner .update-icon {
+      width: 28px;
+      height: 28px;
+      background: rgba(255, 255, 255, 0.2);
+      border-radius: 50%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      animation: pulse-icon 2s ease-in-out infinite;
+    }
+
+    @keyframes pulse-icon {
+
+      0%,
+      100% {
+        transform: scale(1);
+      }
+
+      50% {
+        transform: scale(1.1);
+      }
+    }
+
+    #pwa-update-banner .update-text {
+      display: flex;
+      flex-direction: column;
+      gap: 2px;
+    }
+
+    #pwa-update-banner .update-title {
+      font-weight: 600;
+      font-size: 14px;
+    }
+
+    #pwa-update-banner .update-subtitle {
+      font-size: 12px;
+      opacity: 0.85;
+    }
+
+    #pwa-update-banner .update-btn {
+      background: white;
+      color: #6D5DF6;
+      border: none;
+      padding: 8px 16px;
+      border-radius: 10px;
+      font-family: inherit;
+      font-size: 13px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: transform 0.2s ease, box-shadow 0.2s ease;
+    }
+
+    #pwa-update-banner .update-btn:hover {
+      transform: scale(1.05);
+      box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+    }
+
+    #pwa-update-banner .close-btn {
+      position: absolute;
+      top: -8px;
+      right: -8px;
+      width: 24px;
+      height: 24px;
+      background: rgba(0, 0, 0, 0.3);
+      border: none;
+      border-radius: 50%;
+      color: white;
+      font-size: 14px;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      transition: background 0.2s ease;
+    }
+
+    #pwa-update-banner .close-btn:hover {
+      background: rgba(0, 0, 0, 0.5);
+    }
+
+    @media (max-width: 480px) {
+      #pwa-update-banner {
+        bottom: 80px;
+        left: 16px;
+        right: 16px;
+        transform: translateX(0) translateY(150%);
+        padding: 12px 16px;
+      }
+
+      #pwa-update-banner.show {
+        transform: translateX(0) translateY(0);
+      }
+
+      #pwa-update-banner:hover {
+        transform: translateX(0) translateY(-2px);
+      }
+    }
+  </style>
+
+  <!-- PWA Update Notification Banner (hidden by default) -->
+  <div id="pwa-update-banner">
+    <button class="close-btn" onclick="document.getElementById('pwa-update-banner').classList.remove('show')">×</button>
+    <div class="update-icon">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="white">
+        <path
+          d="M12 4V1L8 5l4 4V6c3.31 0 6 2.69 6 6 0 1.01-.25 1.97-.7 2.8l1.46 1.46C19.54 15.03 20 13.57 20 12c0-4.42-3.58-8-8-8zm0 14c-3.31 0-6-2.69-6-6 0-1.01.25-1.97.7-2.8L5.24 7.74C4.46 8.97 4 10.43 4 12c0 4.42 3.58 8 8 8v3l4-4-4-4v3z" />
+      </svg>
+    </div>
+    <div class="update-text">
+      <span class="update-title">New Update Available!</span>
+      <span class="update-subtitle">Tap to refresh and get the latest version</span>
+    </div>
+    <button class="update-btn" onclick="window.location.reload(true)">Update</button>
+  </div>
+
+  <!-- Service Worker Registration with Update Detection -->
   <script>
-    // Register service worker for PWA support
+    // Register service worker for PWA support with update notifications
     if ('serviceWorker' in navigator) {
       window.addEventListener('load', () => {
         navigator.serviceWorker
@@ -621,10 +772,40 @@
           .then((registration) => {
             console.log('✅ Service Worker registered:', registration.scope);
 
-            // Check for updates every hour
+            // Check for updates immediately on page load
+            registration.update();
+
+            // Check for updates every 30 minutes
             setInterval(() => {
               registration.update();
-            }, 3600000);
+            }, 1800000);
+
+            // Listen for new service worker waiting to activate
+            registration.addEventListener('updatefound', () => {
+              const newWorker = registration.installing;
+              console.log('🔄 New service worker installing...');
+
+              newWorker.addEventListener('statechange', () => {
+                if (newWorker.state === 'installed' && navigator.serviceWorker.controller) {
+                  // New version available - show update banner
+                  console.log('✨ New version available! Showing update prompt.');
+                  const banner = document.getElementById('pwa-update-banner');
+                  if (banner) {
+                    banner.classList.add('show');
+                  }
+                }
+              });
+            });
+
+            // Handle controller change (when skipWaiting is called)
+            let refreshing = false;
+            navigator.serviceWorker.addEventListener('controllerchange', () => {
+              if (!refreshing) {
+                refreshing = true;
+                console.log('🔄 Controller changed, refreshing...');
+                window.location.reload();
+              }
+            });
           })
           .catch((error) => {
             console.log('❌ Service Worker registration failed:', error);
