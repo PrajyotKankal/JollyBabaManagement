@@ -563,6 +563,52 @@
         setTimeout(() => loader.remove(), 600);
       }
     }, 12000);
+
+    // Fix for mobile web keyboard resize issue
+    // When virtual keyboard opens/closes, viewport may not resize properly
+    // This forces a scroll reset to fix the gap
+    (function () {
+      let lastWindowHeight = window.innerHeight;
+      let isKeyboardOpen = false;
+
+      // Detect keyboard open/close by monitoring viewport height changes
+      function checkKeyboard() {
+        const currentHeight = window.innerHeight;
+        const heightDiff = lastWindowHeight - currentHeight;
+
+        // Keyboard likely opened (height decreased significantly)
+        if (heightDiff > 150) {
+          isKeyboardOpen = true;
+        }
+        // Keyboard likely closed (height increased back)
+        else if (heightDiff < -100 && isKeyboardOpen) {
+          isKeyboardOpen = false;
+          // Force viewport reset
+          setTimeout(() => {
+            window.scrollTo(0, 0);
+            document.body.style.height = '100%';
+            document.documentElement.style.height = '100%';
+            // Trigger resize event for Flutter
+            window.dispatchEvent(new Event('resize'));
+          }, 100);
+        }
+
+        lastWindowHeight = currentHeight;
+      }
+
+      // Monitor for resize events (keyboard triggers these on mobile)
+      window.addEventListener('resize', checkKeyboard);
+
+      // Also listen for focus/blur on inputs to detect keyboard
+      document.addEventListener('focusout', function (e) {
+        if (e.target && (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA')) {
+          setTimeout(() => {
+            window.scrollTo(0, 0);
+            window.dispatchEvent(new Event('resize'));
+          }, 300);
+        }
+      });
+    })();
   </script>
 
   <!-- Service Worker Registration -->
