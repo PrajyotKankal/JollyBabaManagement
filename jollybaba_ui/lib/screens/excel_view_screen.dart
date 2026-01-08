@@ -11,6 +11,7 @@ import 'package:intl/intl.dart';
 import 'package:excel/excel.dart' as xls hide Border;
 import 'package:flutter/services.dart';
 import '../services/inventory_service.dart';
+import '../services/auth_service.dart';
 import '../utils/excel_download_stub.dart' if (dart.library.html) '../utils/excel_download_web.dart';
 
 class ExcelViewScreen extends StatefulWidget {
@@ -848,7 +849,20 @@ class _ExcelViewScreenState extends State<ExcelViewScreen> {
       ),
       child: Row(
         children: [
-          IconButton(onPressed: () => Get.back(), icon: const Icon(Icons.arrow_back_ios_new, color: Colors.white, size: 18)),
+          IconButton(onPressed: () async {
+            // Navigate to dashboard - more reliable than Get.back() on web/PWA
+            try {
+              final user = await AuthService().getStoredUser();
+              final role = (user?['role'] ?? 'admin').toString().toLowerCase();
+              if (role == 'admin' || role == 'administrator') {
+                Get.offAllNamed('/admin');
+              } else {
+                Get.offAllNamed('/tech');
+              }
+            } catch (_) {
+              Get.offAllNamed('/admin');
+            }
+          }, icon: const Icon(Icons.arrow_back_ios_new, color: Colors.white, size: 18)),
           Container(
             padding: const EdgeInsets.all(8),
             decoration: BoxDecoration(color: Colors.white24, borderRadius: BorderRadius.circular(8)),

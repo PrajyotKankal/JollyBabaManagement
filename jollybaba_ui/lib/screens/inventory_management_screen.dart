@@ -2725,7 +2725,7 @@ class _InventoryManagementScreenState extends State<InventoryManagementScreen> {
         leading: IconButton(
           icon: const Icon(Icons.arrow_back_rounded),
           tooltip: 'Back',
-          onPressed: () => Get.back(),
+          onPressed: () => Get.offAllNamed('/admin'),
         ),
       ),
       body: Row(

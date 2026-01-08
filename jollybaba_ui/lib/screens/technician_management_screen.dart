@@ -277,7 +277,7 @@ class _TechniciansScreenState extends State<TechniciansScreen> {
         leading: IconButton(
           icon: const Icon(Icons.arrow_back_ios_new_rounded,
               color: Color(0xFF2A2E45), size: 20),
-          onPressed: () => Get.back(),
+          onPressed: () => Get.offAllNamed('/admin'),
         ),
       ),
       floatingActionButton: FloatingActionButton.extended(

@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:get/get.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:url_launcher/url_launcher.dart';
+import '../services/auth_service.dart';
 
 class AboutAppScreen extends StatelessWidget {
   const AboutAppScreen({super.key});
@@ -97,7 +98,19 @@ class AboutAppScreen extends StatelessWidget {
                     children: [
                       _GlassIconButton(
                         icon: Icons.arrow_back_rounded,
-                        onTap: () => Get.back(),
+                        onTap: () async {
+                          try {
+                            final user = await AuthService().getStoredUser();
+                            final role = (user?['role'] ?? 'technician').toString().toLowerCase();
+                            if (role == 'admin' || role == 'administrator') {
+                              Get.offAllNamed('/admin');
+                            } else {
+                              Get.offAllNamed('/tech');
+                            }
+                          } catch (_) {
+                            Get.offAllNamed('/tech');
+                          }
+                        },
                       ),
                       const SizedBox(width: 16),
                       Text(

@@ -702,7 +702,7 @@ class _ReportsScreenState extends State<ReportsScreen> {
         ),
         leading: IconButton(
           icon: const Icon(Icons.arrow_back_ios_new_rounded, color: Colors.white, size: 20),
-          onPressed: () => Get.back(),
+          onPressed: () => Get.offAllNamed('/admin'),
         ),
         actions: [
           if (isMobile)

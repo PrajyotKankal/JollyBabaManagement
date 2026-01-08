@@ -377,6 +377,21 @@ class TicketDetailsController extends GetxController {
 
   void refreshUI() => update();
 
+  /// Navigate back to dashboard - more reliable than Get.back() on web/PWA
+  Future<void> _navigateBackToDashboard() async {
+    try {
+      final role = (_currentUser?['role'] ?? 'technician').toString().toLowerCase();
+      if (role == 'admin' || role == 'administrator') {
+        Get.offAllNamed('/admin');
+      } else {
+        Get.offAllNamed('/tech');
+      }
+    } catch (e) {
+      debugPrint('Navigation error: $e');
+      Get.offAllNamed('/tech');
+    }
+  }
+
   Future<bool> updateTicketDetails(
     Map<String, dynamic> fields, {
     String? auditNote,
@@ -599,6 +614,9 @@ class TicketDetailsController extends GetxController {
 
   // -------------------- PHOTO HELPERS --------------------
   Future<File> _persistPickedFile(File picked) async {
+    // On web, we can't use path_provider/filesystem - just return the picked file
+    if (kIsWeb) return picked;
+    
     final appDir = await getApplicationDocumentsDirectory();
     final outDir = Directory('${appDir.path}/delivery_photos');
     if (!await outDir.exists()) await outDir.create(recursive: true);
@@ -820,7 +838,7 @@ class TicketDetailsController extends GetxController {
       );
 
       await Future.delayed(const Duration(milliseconds: 700));
-      Get.back(result: ticket);
+      _navigateBackToDashboard();
       return;
     } else if (lowerStatus == 'delivered') {
       // Check for both file (mobile) and bytes (web)
@@ -965,7 +983,7 @@ class TicketDetailsController extends GetxController {
         );
         
         await Future.delayed(const Duration(milliseconds: 700));
-        Get.back(result: ticket);
+        _navigateBackToDashboard();
         isSaving.value = false;
         update();
         return;
@@ -1041,7 +1059,7 @@ class TicketDetailsController extends GetxController {
       await Future.delayed(const Duration(milliseconds: 700));
 
       // return to the previous screen and pass the updated ticket as the result
-      Get.back(result: ticket);
+      _navigateBackToDashboard();
     } else {
       Get.snackbar(
         '❌ Error',

@@ -1134,7 +1134,7 @@ class _KhatabookScreenState extends State<KhatabookScreen> {
         elevation: 0,
         leading: IconButton(
           icon: const Icon(Icons.arrow_back_rounded, color: Color(0xFF1E2343)),
-          onPressed: () => Get.back(),
+          onPressed: () => Get.offAllNamed('/admin'),
         ),
         title: Text(
           'Khatabook',

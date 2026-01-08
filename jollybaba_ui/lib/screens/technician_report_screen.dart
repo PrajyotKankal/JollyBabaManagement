@@ -301,7 +301,7 @@ class _TechnicianReportScreenState extends State<TechnicianReportScreen> {
         ),
         leading: IconButton(
           icon: const Icon(Icons.arrow_back_ios_new_rounded, color: Color(0xFF2A2E45), size: 20),
-          onPressed: () => Get.back(),
+          onPressed: () => Get.offAllNamed('/admin'),
         ),
       ),
       body: _loading

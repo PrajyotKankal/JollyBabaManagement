@@ -1,5 +1,6 @@
 // lib/screens/ticket_details_screen.dart
 import 'dart:io';
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:get/get.dart';
 import 'package:google_fonts/google_fonts.dart';
@@ -133,6 +134,11 @@ class _TicketDetailsScreenState extends State<TicketDetailsScreen> {
       );
     }
 
+    // On web, we don't use dart:io File - skip to placeholder
+    if (kIsWeb) {
+      return _placeholderThumbnail(size: size);
+    }
+
     try {
       final file = File(photoRef);
       if (!file.existsSync()) return _placeholderThumbnail(size: size);
@@ -216,13 +222,20 @@ class _TicketDetailsScreenState extends State<TicketDetailsScreen> {
     final refRepaired = controller.repairedPhotoRef;
     final refDelivered = controller.photoRef2;
 
-    final filePending = controller.photoFile1 ?? (refPending.isNotEmpty && !refPending.startsWith('http') ? File(refPending) : null);
-    final fileRepaired = controller.repairedPhotoFile ?? (refRepaired.isNotEmpty && !refRepaired.startsWith('http') ? File(refRepaired) : null);
-    final fileDelivered = controller.photoFile2 ?? (refDelivered.isNotEmpty && !refDelivered.startsWith('http') ? File(refDelivered) : null);
+    // On web, we can't use File() - only use URL-based references
+    File? filePending;
+    File? fileRepaired;
+    File? fileDelivered;
+    
+    if (!kIsWeb) {
+      filePending = controller.photoFile1 ?? (refPending.isNotEmpty && !refPending.startsWith('http') ? File(refPending) : null);
+      fileRepaired = controller.repairedPhotoFile ?? (refRepaired.isNotEmpty && !refRepaired.startsWith('http') ? File(refRepaired) : null);
+      fileDelivered = controller.photoFile2 ?? (refDelivered.isNotEmpty && !refDelivered.startsWith('http') ? File(refDelivered) : null);
+    }
 
-    final hasPending = (filePending != null && filePending.existsSync()) || refPending.trim().isNotEmpty;
-    final hasRepaired = (fileRepaired != null && fileRepaired.existsSync()) || refRepaired.trim().isNotEmpty;
-    final hasDelivered = (fileDelivered != null && fileDelivered.existsSync()) || refDelivered.trim().isNotEmpty;
+    final hasPending = (!kIsWeb && filePending != null && filePending.existsSync()) || refPending.trim().isNotEmpty;
+    final hasRepaired = (!kIsWeb && fileRepaired != null && fileRepaired.existsSync()) || refRepaired.trim().isNotEmpty;
+    final hasDelivered = (!kIsWeb && fileDelivered != null && fileDelivered.existsSync()) || refDelivered.trim().isNotEmpty;
 
     Widget imageTile({
       File? file,
@@ -230,11 +243,11 @@ class _TicketDetailsScreenState extends State<TicketDetailsScreen> {
       required String caption,
       required String badge,
     }) {
-      final fileExists = file != null && file.existsSync();
+      final fileExists = !kIsWeb && file != null && file.existsSync();
       final hasUrl = url != null && url.trim().isNotEmpty;
 
       final imageWidget = fileExists
-          ? Image.file(file, fit: BoxFit.cover)
+          ? Image.file(file!, fit: BoxFit.cover)
           : hasUrl
               ? Image.network(url!, fit: BoxFit.cover, errorBuilder: (_, __, ___) => _emptyPhotoTile(caption))
               : _emptyPhotoTile(caption);
