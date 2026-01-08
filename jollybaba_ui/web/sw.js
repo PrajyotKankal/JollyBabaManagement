@@ -23,7 +23,8 @@ self.addEventListener('install', (event) => {
             return cache.addAll(APP_SHELL);
         })
     );
-    self.skipWaiting(); // Activate immediately
+    // Activate new version immediately (silent auto-update)
+    self.skipWaiting();
 });
 
 // Activate event - clean old caches
@@ -165,6 +166,14 @@ self.addEventListener('sync', (event) => {
 self.addEventListener('push', (event) => {
     console.log('[SW] Push notification received');
     // Can be used later for real-time updates
+});
+
+// Handle messages from the page (e.g., SKIP_WAITING for updates)
+self.addEventListener('message', (event) => {
+    if (event.data && event.data.type === 'SKIP_WAITING') {
+        console.log('[SW] Received SKIP_WAITING message, activating new version...');
+        self.skipWaiting();
+    }
 });
 
 console.log('[SW] Service worker loaded');
