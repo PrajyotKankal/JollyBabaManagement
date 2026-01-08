@@ -1,29 +1,70 @@
-// JollyBaba Service Worker - Online-Only PWA
-// Provides fast loading and install prompts, but requires internet for functionality
+// JollyBaba Service Worker - Fast Loading PWA
+// Uses CACHE-FIRST for static assets, NETWORK-FIRST for API calls
 
-const CACHE_NAME = 'jollybaba-v1';
-const OFFLINE_URL = '/offline.html';
+const CACHE_VERSION = 'v2';
+const CACHE_NAME = `jollybaba-${CACHE_VERSION}`;
 
-// Files to cache for faster loading (app shell only)
-const APP_SHELL = [
+// Static assets to pre-cache during install
+const PRECACHE_ASSETS = [
     '/',
     '/index.html',
     '/manifest.json',
     '/favicon.png',
     '/icons/Icon-192.png',
     '/icons/Icon-512.png',
+    '/flutter_bootstrap.js',
 ];
 
-// Install event - cache app shell
+// Patterns for different caching strategies
+const CACHE_FIRST_PATTERNS = [
+    // Flutter compiled assets (these have content hashes, safe to cache)
+    /\.js$/,
+    /\.css$/,
+    /\.woff2?$/,
+    /\.ttf$/,
+    /\.otf$/,
+    /\.png$/,
+    /\.jpg$/,
+    /\.jpeg$/,
+    /\.gif$/,
+    /\.svg$/,
+    /\.ico$/,
+    /\.webp$/,
+    // Google Fonts
+    /fonts\.googleapis\.com/,
+    /fonts\.gstatic\.com/,
+];
+
+const NETWORK_FIRST_PATTERNS = [
+    // API calls - always fetch fresh data
+    /\/api\//,
+    // External services
+    /cloudinary\.com/,
+    /googleapis\.com\/oauth/,
+    /accounts\.google\.com/,
+];
+
+const NEVER_CACHE_PATTERNS = [
+    // Service worker itself
+    /sw\.js/,
+    // Chrome extensions
+    /^chrome-extension/,
+];
+
+// Install event - pre-cache essential assets
 self.addEventListener('install', (event) => {
     console.log('[SW] Installing service worker...');
     event.waitUntil(
-        caches.open(CACHE_NAME).then((cache) => {
-            console.log('[SW] Caching app shell');
-            return cache.addAll(APP_SHELL);
-        })
+        caches.open(CACHE_NAME)
+            .then((cache) => {
+                console.log('[SW] Pre-caching app shell');
+                return cache.addAll(PRECACHE_ASSETS);
+            })
+            .catch((err) => {
+                console.log('[SW] Pre-cache failed (non-critical):', err);
+            })
     );
-    // Activate new version immediately (silent auto-update)
+    // Activate immediately for faster updates
     self.skipWaiting();
 });
 
@@ -42,138 +83,159 @@ self.addEventListener('activate', (event) => {
             );
         })
     );
-    self.clients.claim(); // Take control immediately
+    // Take control of all pages immediately
+    self.clients.claim();
 });
 
-// Fetch event - NETWORK-FIRST strategy (online-only)
-self.addEventListener('fetch', (event) => {
-    const { request } = event;
-    const url = new URL(request.url);
+// Helper: Check if URL matches any pattern in array
+function matchesPattern(url, patterns) {
+    return patterns.some((pattern) => pattern.test(url));
+}
 
-    // Skip chrome-extension and non-http requests
-    if (!url.protocol.startsWith('http')) {
-        return;
-    }
-
-    event.respondWith(
-        // ALWAYS try network first (online-only requirement)
+// Helper: CACHE-FIRST strategy (fast for static assets)
+async function cacheFirst(request) {
+    const cached = await caches.match(request);
+    if (cached) {
+        // Return cached version immediately, update cache in background
         fetch(request)
             .then((response) => {
-                // If successful, update cache for next time
                 if (response && response.status === 200) {
                     const responseClone = response.clone();
                     caches.open(CACHE_NAME).then((cache) => {
                         cache.put(request, responseClone);
                     });
                 }
-                return response;
             })
-            .catch((error) => {
-                console.log('[SW] Network request failed:', request.url);
+            .catch(() => { }); // Ignore background update errors
+        return cached;
+    }
 
-                // For navigation requests (pages), show offline page
-                if (request.mode === 'navigate') {
-                    return caches.match(OFFLINE_URL).then((cachedResponse) => {
-                        if (cachedResponse) {
-                            return cachedResponse;
-                        }
-                        // Fallback: return basic offline HTML
-                        return new Response(
-                            `<!DOCTYPE html>
-              <html>
-              <head>
-                <meta charset="UTF-8">
-                <meta name="viewport" content="width=device-width, initial-scale=1.0">
-                <title>Offline - JollyBaba</title>
-                <style>
-                  * { margin: 0; padding: 0; box-sizing: border-box; }
-                  body {
-                    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
-                    display: flex;
-                    align-items: center;
-                    justify-content: center;
-                    min-height: 100vh;
-                    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-                    color: white;
-                    text-align: center;
-                    padding: 20px;
-                  }
-                  .container {
-                    max-width: 400px;
-                  }
-                  h1 {
-                    font-size: 48px;
-                    margin-bottom: 16px;
-                  }
-                  p {
-                    font-size: 18px;
-                    margin-bottom: 24px;
-                    opacity: 0.9;
-                  }
-                  button {
-                    background: white;
-                    color: #667eea;
-                    border: none;
-                    padding: 12px 32px;
-                    font-size: 16px;
-                    font-weight: 600;
-                    border-radius: 8px;
-                    cursor: pointer;
-                    transition: transform 0.2s;
-                  }
-                  button:hover {
-                    transform: scale(1.05);
-                  }
-                </style>
-              </head>
-              <body>
-                <div class="container">
-                  <h1>📡</h1>
-                  <h2>You're Offline</h2>
-                  <p>JollyBaba requires an internet connection to work. Please check your connection and try again.</p>
-                  <button onclick="window.location.reload()">Retry</button>
-                </div>
-              </body>
-              </html>`,
-                            {
-                                headers: { 'Content-Type': 'text/html' },
-                            }
-                        );
-                    });
-                }
+    // Not in cache, fetch and cache
+    const response = await fetch(request);
+    if (response && response.status === 200) {
+        const responseClone = response.clone();
+        caches.open(CACHE_NAME).then((cache) => {
+            cache.put(request, responseClone);
+        });
+    }
+    return response;
+}
 
-                // For other requests (API, images, etc.), DON'T serve from cache
-                // This ensures the app doesn't work offline (as requested)
-                return new Response(
-                    JSON.stringify({ error: 'Network error - Internet required' }),
-                    {
-                        status: 503,
-                        statusText: 'Service Unavailable',
-                        headers: { 'Content-Type': 'application/json' },
+// Helper: NETWORK-FIRST strategy (for API calls)
+async function networkFirst(request) {
+    try {
+        const response = await fetch(request);
+        return response;
+    } catch (error) {
+        // Network failed, try cache as fallback
+        const cached = await caches.match(request);
+        if (cached) {
+            return cached;
+        }
+        throw error;
+    }
+}
+
+// Fetch event - route requests to appropriate strategy
+self.addEventListener('fetch', (event) => {
+    const { request } = event;
+    const url = request.url;
+
+    // Skip non-http requests
+    if (!url.startsWith('http')) {
+        return;
+    }
+
+    // Never cache these
+    if (matchesPattern(url, NEVER_CACHE_PATTERNS)) {
+        return;
+    }
+
+    // Network-first for API calls (always get fresh data)
+    if (matchesPattern(url, NETWORK_FIRST_PATTERNS)) {
+        event.respondWith(networkFirst(request));
+        return;
+    }
+
+    // Cache-first for static assets (fast loading)
+    if (matchesPattern(url, CACHE_FIRST_PATTERNS)) {
+        event.respondWith(cacheFirst(request));
+        return;
+    }
+
+    // For navigation requests (HTML pages), use cache-first with network fallback
+    if (request.mode === 'navigate') {
+        event.respondWith(
+            caches.match(request)
+                .then((cached) => {
+                    if (cached) {
+                        // Update cache in background
+                        fetch(request)
+                            .then((response) => {
+                                if (response && response.status === 200) {
+                                    caches.open(CACHE_NAME).then((cache) => {
+                                        cache.put(request, response);
+                                    });
+                                }
+                            })
+                            .catch(() => { });
+                        return cached;
                     }
-                );
-            })
-    );
+                    return fetch(request);
+                })
+                .catch(() => {
+                    // Offline fallback
+                    return new Response(
+                        `<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Offline - JollyBaba</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+      display: flex; align-items: center; justify-content: center;
+      min-height: 100vh;
+      background: linear-gradient(135deg, #6D5DF6, #8A8EFF);
+      color: white; text-align: center; padding: 20px;
+    }
+    h1 { font-size: 48px; margin-bottom: 16px; }
+    p { font-size: 16px; margin-bottom: 24px; opacity: 0.9; }
+    button {
+      background: white; color: #6D5DF6; border: none;
+      padding: 12px 32px; font-size: 16px; font-weight: 600;
+      border-radius: 12px; cursor: pointer;
+    }
+  </style>
+</head>
+<body>
+  <div>
+    <h1>📡</h1>
+    <h2>You're Offline</h2>
+    <p>Please check your internet connection and try again.</p>
+    <button onclick="window.location.reload()">Retry</button>
+  </div>
+</body>
+</html>`,
+                        { headers: { 'Content-Type': 'text/html' } }
+                    );
+                })
+        );
+        return;
+    }
+
+    // Default: try cache first, fallback to network
+    event.respondWith(cacheFirst(request));
 });
 
-// Background sync (for future enhancement)
-self.addEventListener('sync', (event) => {
-    console.log('[SW] Background sync:', event.tag);
-    // Can be used later for queuing failed requests
-});
-
-// Push notifications (for future enhancement)
-self.addEventListener('push', (event) => {
-    console.log('[SW] Push notification received');
-    // Can be used later for real-time updates
-});
-
-// Handle messages from the page (e.g., SKIP_WAITING for updates)
+// Handle messages from the page
 self.addEventListener('message', (event) => {
     if (event.data && event.data.type === 'SKIP_WAITING') {
-        console.log('[SW] Received SKIP_WAITING message, activating new version...');
+        console.log('[SW] Received SKIP_WAITING, activating...');
         self.skipWaiting();
     }
 });
 
-console.log('[SW] Service worker loaded');
+console.log('[SW] Service worker loaded - Cache-First strategy enabled');
