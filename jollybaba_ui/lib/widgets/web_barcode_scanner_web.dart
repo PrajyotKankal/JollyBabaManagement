@@ -99,10 +99,10 @@ class WebBarcodeScanner {
         // Ignore
       });
       
-      // Configuration
+      // Configuration - optimized for IMEI barcodes
       final config = js_util.jsify({
-        'fps': 10,
-        'qrbox': {'width': 250, 'height': 250},
+        'fps': 15,  // Higher FPS for smoother scanning
+        'qrbox': {'width': 280, 'height': 100},  // Rectangular - better for horizontal IMEI barcodes
         'aspectRatio': 1.0,
       });
       
