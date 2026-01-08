@@ -1,7 +1,7 @@
 // JollyBaba Service Worker - Fast Loading PWA
 // Uses CACHE-FIRST for static assets, NETWORK-FIRST for API calls
 
-const CACHE_VERSION = 'v2';
+const CACHE_VERSION = 'v3';
 const CACHE_NAME = `jollybaba-${CACHE_VERSION}`;
 
 // Static assets to pre-cache during install
