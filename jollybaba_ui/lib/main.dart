@@ -81,7 +81,7 @@ class JollyBabaApp extends StatelessWidget {
         ),
         GetPage(
           name: '/success',
-          page: () => const LoginSuccessScreen(role: 'technician'),
+          page: () => const LoginSuccessScreen(role: ''),  // Empty = fetch from stored user
         ), // ✅ integrated success route
         GetPage(name: '/inventory', page: () => const InventoryManagementScreen()),
         GetPage(name: '/khatabook', page: () => const KhatabookScreen()),
