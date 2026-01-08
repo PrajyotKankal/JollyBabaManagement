@@ -9,6 +9,7 @@ import 'package:intl/intl.dart';
 import '../utils/whatsapp_launcher_mobile.dart' if (dart.library.html) '../utils/whatsapp_launcher_web.dart';
 
 import 'ticket_details_controller.dart';
+import '../services/auth_service.dart';
 import 'widgets/customer_info_card.dart';
 import 'widgets/repair_details_card.dart';
 import 'widgets/technician_notes_section.dart';
@@ -81,6 +82,23 @@ class _TicketDetailsScreenState extends State<TicketDetailsScreen> {
     // If you want to remove controller when screen is closed uncomment:
     // Get.delete<TicketDetailsController>(tag: tag);
     super.dispose();
+  }
+
+  /// Navigate back to the appropriate dashboard based on user role
+  /// More reliable than Get.back() on web/PWA platforms
+  Future<void> _navigateBack() async {
+    try {
+      final storedUser = await AuthService().getStoredUser();
+      final role = (storedUser?['role'] ?? 'technician').toString().toLowerCase();
+      if (role == 'admin') {
+        Get.offAllNamed('/admin');
+      } else {
+        Get.offAllNamed('/tech');
+      }
+    } catch (e) {
+      debugPrint('Navigation error: $e');
+      Get.offAllNamed('/tech');
+    }
   }
 
   // --- Helper: Thumbnail from local file or network ---
@@ -386,7 +404,7 @@ class _TicketDetailsScreenState extends State<TicketDetailsScreen> {
     return PopScope(
       canPop: false,
       onPopInvokedWithResult: (didPop, result) {
-        if (!didPop) Get.back(result: controller.ticket);
+        if (!didPop) _navigateBack();
       },
       child: Scaffold(
         backgroundColor: const Color(0xFFF5F7FF),
@@ -405,7 +423,7 @@ class _TicketDetailsScreenState extends State<TicketDetailsScreen> {
           ),
           leading: IconButton(
             icon: const Icon(Icons.arrow_back_ios_new, color: Color(0xFF2A2E45)),
-            onPressed: () => Get.back(result: controller.ticket),
+            onPressed: () => _navigateBack(),
           ),
           actions: [
             // Edit button - opens EditTicketSheet for modifying ticket details
