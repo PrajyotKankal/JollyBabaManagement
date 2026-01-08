@@ -354,26 +354,26 @@ class _CreateTicketScreenState extends State<CreateTicketScreen>
 
       if (created) {
         if (mounted) setState(() => showSuccessCard = true);
+        
+        // Show success for 2 seconds
         await Future.delayed(const Duration(seconds: 2));
+        
         if (mounted) setState(() => isClosing = true);
         await Future.delayed(const Duration(milliseconds: 300));
+        
         if (mounted) {
-          // Try Get.back first, but add fallback if navigation stack is empty
+          // Always navigate to dashboard - more reliable than Get.back() on web/PWA
           try {
-            if (Get.previousRoute.isNotEmpty) {
-              Get.back(result: true);
+            final storedUser = await AuthService().getStoredUser();
+            final role = (storedUser?['role'] ?? 'technician').toString().toLowerCase();
+            if (role == 'admin') {
+              Get.offAllNamed('/admin');
             } else {
-              // Fallback: navigate to dashboard if cannot go back
-              final storedUser = await AuthService().getStoredUser();
-              final role = (storedUser?['role'] ?? 'technician').toString().toLowerCase();
-              if (role == 'admin') {
-                Get.offAllNamed('/admin');
-              } else {
-                Get.offAllNamed('/tech');
-              }
+              Get.offAllNamed('/tech');
             }
           } catch (e) {
             // Fallback on any navigation error
+            debugPrint('Navigation error after ticket creation: $e');
             Get.offAllNamed('/tech');
           }
         }
